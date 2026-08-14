@@ -20,12 +20,6 @@ const rooms = [
   { name: "Books & art", icon: "◌", count: 14, color: "#f5b49f" },
 ];
 
-const invitations = [
-  { person: people[0], text: "I’m off this evening—anyone want to walk around the fair?", when: "Tonight", room: "Things to do tonight" },
-  { person: people[2], text: "There’s a tiny jazz show at 8. I’d love some company.", when: "Tonight", room: "Live music" },
-  { person: people[3], text: "Trying the new coffee place downtown around 3. Join me?", when: "This afternoon", room: "Food & coffee" },
-];
-
 export default function Home() {
   const [verified, setVerified] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
@@ -39,6 +33,10 @@ export default function Home() {
   const [authMessage, setAuthMessage] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [username, setUsername] = useState("");
+  const [broadArea, setBroadArea] = useState("");
+  const [birthDate, setBirthDate] = useState("");
+  const [interests, setInterests] = useState<string[]>([]);
+  const [verificationStatus, setVerificationStatus] = useState("unverified");
   const [adultConfirmed, setAdultConfirmed] = useState(false);
   const [hiddenPeople, setHiddenPeople] = useState<string[]>([]);
   const [draggingPerson, setDraggingPerson] = useState<string | null>(null);
@@ -48,11 +46,14 @@ export default function Home() {
     const refreshAccess = async (userId?: string) => {
       setSignedIn(Boolean(userId));
       if (!userId) { setVerified(false); setProfileReady(false); return; }
-      const [{ data: account }, { data: profile }] = await Promise.all([
+      const [{ data: account }, { data: profile }, { data: request }] = await Promise.all([
         supabase.from("accounts").select("state, verification, membership_active").eq("user_id", userId).maybeSingle(),
-        supabase.from("profiles").select("username").eq("user_id", userId).maybeSingle(),
+        supabase.from("profiles").select("username, broad_area, interests").eq("user_id", userId).maybeSingle(),
+        supabase.from("verification_requests").select("status").eq("user_id", userId).maybeSingle(),
       ]);
       setProfileReady(Boolean(profile));
+      if (profile) { setUsername(profile.username); setBroadArea(profile.broad_area ?? ""); setInterests(profile.interests ?? []); }
+      setVerificationStatus(request?.status ?? account?.verification ?? "unverified");
       setVerified(account?.state === "active" && account.verification === "verified" && account.membership_active === true);
       setModal(profile ? null : "onboarding");
     };
@@ -79,14 +80,21 @@ export default function Home() {
     else setModal("onboarding");
   };
   const saveProfile = async () => {
-    if (!supabase || !adultConfirmed || !username) return;
+    if (!supabase || !adultConfirmed || !username || !birthDate || !broadArea || interests.length === 0) return;
     setAuthBusy(true);
     const { data: sessionData } = await supabase.auth.getSession();
     const userId = sessionData.session?.user.id;
-    const { error } = userId ? await supabase.from("profiles").upsert({ user_id: userId, username }) : { error: new Error("Please sign in again.") };
+    if (!userId) { setAuthBusy(false); return setAuthMessage("Please sign in again."); }
+    const adultCutoff = new Date(); adultCutoff.setFullYear(adultCutoff.getFullYear() - 18);
+    if (new Date(`${birthDate}T12:00:00`) > adultCutoff) { setAuthBusy(false); return setAuthMessage("Meet Freely is only available to adults age 18 and older."); }
+    const [{ error: profileError }, { error: verificationError }] = await Promise.all([
+      supabase.from("profiles").upsert({ user_id: userId, username, broad_area: broadArea, interests, discoverable: false }),
+      supabase.from("verification_requests").upsert({ user_id: userId, adult_attested: true, birth_date: birthDate, status: "pending", submitted_at: new Date().toISOString() }),
+    ]);
+    const error = profileError ?? verificationError;
     setAuthBusy(false);
     if (error) return setAuthMessage(error.message);
-    setProfileReady(true); setAuthMessage(""); setModal(null);
+    setProfileReady(true); setVerificationStatus("pending"); setAuthMessage("");
   };
   const signOut = async () => { await supabase?.auth.signOut(); setModal(null); };
   const hideDraggedPerson = () => {
@@ -130,14 +138,17 @@ export default function Home() {
         <div className="section-heading"><div><p className="eyebrow">OPEN INVITATIONS</p><h2>See who wants to do something.</h2></div><p className="section-note">Short, timely posts from people who are online now. They disappear automatically, so the list always feels alive.</p></div>
         <div className="invite-layout">
           <div className="invite-feed">
-            {invitations.map(({ person, text, when, room }) => <article className="invite-card" key={person.name} onClick={() => verified ? hello(person) : enter()}>
-              <div className={`invite-avatar ${person.tone}`}>{verified ? person.initials : "•"}<i /></div>
-              <div><div className="invite-meta"><strong>{verified ? person.name : "Verified member"}</strong><span>{when}</span></div><p>{verified ? text : "Verify your account to read this open invitation."}</p><small>{room} · {person.area}</small></div>
-              <button aria-label={`Message ${person.name}`}>Message <span>→</span></button>
-            </article>)}
+            <article className="invite-card" onClick={() => verified ? hello(people[0]) : enter()}>
+              <div className="invite-avatar coral">{verified ? "CF" : "•"}<i /></div>
+              <div><div className="invite-meta"><strong>{verified ? "CityFern" : "Verified member"}</strong><span>Tonight</span></div><p>{verified ? "I’m off this evening—anyone want to walk around the fair?" : "Verify your account to read this open invitation."}</p><small>Things to do tonight · West side</small></div><button>Message <span>→</span></button>
+            </article>
+            <article className="invite-card" onClick={() => verified ? hello(people[2]) : enter()}>
+              <div className="invite-avatar gold">{verified ? "SS" : "•"}<i /></div>
+              <div><div className="invite-meta"><strong>{verified ? "SundayStatic" : "Verified member"}</strong><span>Tonight</span></div><p>{verified ? "There’s a tiny jazz show at 8. I’d love some company." : "Verify your account to read this open invitation."}</p><small>Live music · Center city</small></div><button>Message <span>→</span></button>
+            </article>
             <button className="post-invite" onClick={verified ? () => setModal("onboarding") : enter()}><span>＋</span><div><strong>Post an open invitation</strong><small>Tell the room what you feel like doing.</small></div></button>
           </div>
-          <aside className="interest-rooms"><p className="eyebrow">BROWSE ROOMS</p>{rooms.map(room => <button key={room.name}><span style={{ background: room.color }}>{room.icon}</span><div><strong>{room.name}</strong><small>{room.count} here now</small></div><b>→</b></button>)}</aside>
+          <aside className="interest-rooms"><p className="eyebrow">BROWSE ROOMS</p>{rooms.map(room => <button key={room.name}><span className={`room-icon ${room.name === "Live music" ? "plum" : room.name === "Food & coffee" ? "gold" : room.name === "Outdoors" ? "mint" : "coral"}`}>{room.icon}</span><div><strong>{room.name}</strong><small>{room.count} here now</small></div><b>→</b></button>)}</aside>
         </div>
       </section>
 
@@ -195,8 +206,8 @@ export default function Home() {
           <button className="primary full" onClick={submitAuth} disabled={!email || password.length < 8 || authBusy || !isSupabaseConfigured}>{authBusy ? "Working…" : authMode === "signin" ? "Sign in" : "Create my private account"} <span>→</span></button>
           {authMessage && <p className="auth-message" role="status">{authMessage}</p>}<small className="modal-foot">New accounts receive one confirmation email. Profile access still requires adult verification and active membership.</small>
         </> : modal === "onboarding" ? <>
-          <div className="modal-mark">✓</div><p className="eyebrow">{profileReady ? "ACCOUNT CREATED" : "ONE LAST STEP"}</p><h2>{profileReady ? "You’re in." : "Choose your username."}</h2>
-          {profileReady ? <><p>Your private account is ready. Identity verification and membership activation are the next steps before profiles become visible.</p><button className="primary full" onClick={() => setModal(null)}>Return to Meet Freely <span>→</span></button><button className="signout-button" onClick={signOut}>Sign out</button></> : <><p>This is the only name other members will see. Don’t use your surname or social handle.</p><input className="auth-input" value={username} onChange={(event) => setUsername(event.target.value.replace(/[^A-Za-z0-9_]/g, "").slice(0, 24))} placeholder="Private username" aria-label="Private username" /><label className="adult-check"><input type="checkbox" checked={adultConfirmed} onChange={(event) => setAdultConfirmed(event.target.checked)} /> I confirm I am at least 18 years old.</label><button className="primary full" onClick={saveProfile} disabled={!adultConfirmed || username.length < 3 || authBusy}>{authBusy ? "Saving…" : "Create my account"} <span>→</span></button>{authMessage && <p className="auth-message" role="status">{authMessage}</p>}</>}
+          <div className="modal-mark">✓</div><p className="eyebrow">{profileReady ? "ACCOUNT STATUS" : "PRIVATE PROFILE"}</p><h2>{profileReady ? "Your place is saved." : "Make your bubble yours."}</h2>
+          {profileReady ? <><div className="account-progress"><span className="done">✓ Email confirmed</span><span className="done">✓ Private profile created</span><span className={verificationStatus === "verified" ? "done" : "current"}>{verificationStatus === "verified" ? "✓" : "3"} Adult verification {verificationStatus}</span><span>4 Membership activation</span></div><p>Your profile remains invisible until adult verification and membership are active. No one can spectate while you wait.</p><button className="primary full" onClick={() => setModal(null)}>Return to Meet Freely <span>→</span></button><button className="signout-button" onClick={signOut}>Sign out</button></> : <><p>Use a username—not your surname or social handle. Only your broad area is shown.</p><input className="auth-input" value={username} onChange={(event) => setUsername(event.target.value.replace(/[^A-Za-z0-9_]/g, "").slice(0, 24))} placeholder="Private username" aria-label="Private username" /><input className="auth-input" value={broadArea} onChange={(event) => setBroadArea(event.target.value.slice(0, 80))} placeholder="Broad area, e.g. West side" aria-label="Broad area" /><label className="field-label">Date of birth<input className="auth-input" type="date" value={birthDate} onChange={(event) => setBirthDate(event.target.value)} /></label><div className="interest-picker">{["Food & coffee","Live music","Outdoors","Books & art","Things to do tonight"].map(item => <button type="button" className={interests.includes(item) ? "selected" : ""} key={item} onClick={() => setInterests(current => current.includes(item) ? current.filter(value => value !== item) : [...current, item])}>{item}</button>)}</div><label className="adult-check"><input type="checkbox" checked={adultConfirmed} onChange={(event) => setAdultConfirmed(event.target.checked)} /> I confirm this birth date is mine and I am at least 18 years old.</label><button className="primary full" onClick={saveProfile} disabled={!adultConfirmed || username.length < 3 || !broadArea || !birthDate || interests.length === 0 || authBusy}>{authBusy ? "Saving…" : "Submit for verification"} <span>→</span></button>{authMessage && <p className="auth-message" role="status">{authMessage}</p>}<small className="modal-foot">Your birth date is private and is never placed on your dating profile.</small></>}
         </> : <>
           <div className={`modal-avatar ${selected?.tone}`}>{selected?.initials}</div><p className="eyebrow">SAY HELLO TO {selected?.name.toUpperCase()}</p><h2>{sent ? "Hello sent." : "Start like a person."}</h2>{sent ? <p>Your introduction is waiting in their inbox. They can accept, politely pass, or report it—no awkward matching game.</p> : <><textarea defaultValue={`Your note about ${selected?.tags[1].toLowerCase()} caught my attention—what got you into it?`} aria-label="Introduction message"/><p className="character-note">Thoughtful introductions get thoughtful replies.</p><button className="primary full" onClick={() => setSent(true)}>Send introduction <span>→</span></button></>}
         </>}

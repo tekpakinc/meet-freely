@@ -145,6 +145,10 @@ footer p { font:italic 15px Georgia,serif; } footer div { display:flex; gap:20px
 .auth-tabs button { border:0; border-radius:999px; background:transparent; padding:10px; font-size:12px; font-weight:800; }.auth-tabs button.active { background:white; box-shadow:0 3px 10px rgba(23,35,30,.1); }
 .adult-check { display:flex; gap:10px; align-items:flex-start; margin:4px 0 18px; font-size:13px; line-height:1.4; }
 .adult-check input { margin-top:2px; }
+.field-label { display:block; margin:4px 0 2px; color:#58635d; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:.7px; }
+.field-label .auth-input { margin-top:7px; color:var(--ink); text-transform:none; letter-spacing:0; }
+.interest-picker { display:flex; flex-wrap:wrap; gap:7px; margin:4px 0 16px; }.interest-picker button { border:1px solid var(--line); background:white; border-radius:999px; padding:8px 11px; font-size:10px; font-weight:800; }.interest-picker button.selected { background:var(--lime); border-color:var(--ink); }
+.account-progress { display:grid; gap:8px; margin:18px 0; }.account-progress span { border:1px solid var(--line); border-radius:12px; padding:11px 13px; font-size:12px; color:#727a75; }.account-progress .done { background:#eef8e9; color:#347047; }.account-progress .current { background:#fff1c8; color:#7b5b00; border-color:#e4c45d; }
 .signout-button { border:0; background:transparent; text-decoration:underline; margin:16px auto 0; color:#657068; }
 textarea { width:100%; min-height:120px; resize:vertical; border:1px solid var(--ink); background:#f8f4e9; padding:15px; font:15px/1.5 Georgia,serif; }
 .character-note { font-size:11px!important; color:#6d746f; }
