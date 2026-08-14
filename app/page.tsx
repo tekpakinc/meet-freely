@@ -21,6 +21,7 @@ const rooms = [
 ];
 
 export default function Home() {
+  const [browserReady, setBrowserReady] = useState(false);
   const [verified, setVerified] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
   const [profileReady, setProfileReady] = useState(false);
@@ -42,6 +43,7 @@ export default function Home() {
   const [draggingPerson, setDraggingPerson] = useState<string | null>(null);
 
   useEffect(() => {
+    setBrowserReady(true);
     if (!supabase) return;
     const refreshAccess = async (userId?: string) => {
       setSignedIn(Boolean(userId));
@@ -103,6 +105,10 @@ export default function Home() {
     setDraggingPerson(null);
   };
   const hello = (person: (typeof people)[number]) => { setSelected(person); setSent(false); setModal("hello"); };
+
+  if (!browserReady) {
+    return <main className="app-loading" aria-busy="true"><div className="loading-bubble"><span>●</span><strong>meet freely</strong><small>Opening the room…</small></div></main>;
+  }
 
   return (
     <main>

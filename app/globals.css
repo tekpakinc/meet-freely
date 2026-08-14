@@ -6,6 +6,8 @@ html { scroll-behavior:smooth; }
 body { margin:0; background:radial-gradient(circle at 8% 12%,#fff0b8 0,transparent 25%),radial-gradient(circle at 92% 22%,#ffd5e4 0,transparent 28%),var(--cream); color:var(--ink); font-family:Arial, Helvetica, sans-serif; }
 button, a { font:inherit; }
 button { cursor:pointer; }
+.app-loading { min-height:100vh; display:grid; place-items:center; background:radial-gradient(circle at 30% 25%,#fff0b8,transparent 30%),radial-gradient(circle at 72% 65%,#ffd5e4,transparent 32%),var(--cream); }
+.loading-bubble { width:220px; height:220px; border-radius:50%; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:7px; background:var(--paper); border:1px solid var(--ink); box-shadow:inset 18px 18px 30px rgba(255,255,255,.7),inset -18px -18px 30px rgba(23,35,30,.09),12px 16px 0 var(--lime); }.loading-bubble span { color:var(--orange); }.loading-bubble strong { font:28px Georgia,serif; }.loading-bubble small { color:#657068; }
 a { color:inherit; text-decoration:none; }
 .nav { height:78px; padding:0 5vw; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--line); position:sticky; top:0; background:rgba(246,242,232,.93); backdrop-filter:blur(14px); z-index:20; }
 .brand { font-weight:800; font-size:21px; letter-spacing:-.7px; display:flex; gap:9px; align-items:center; }
