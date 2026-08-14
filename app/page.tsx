@@ -12,6 +12,20 @@ const people = [
   { name: "HeyItsRae", age: 30, area: "Within 10 miles", note: "Sunday brunch host. Terrible at trivia. Excellent teammate.", tags: ["Long-term", "Friends first", "Brunch"], initials: "HR", tone: "rose", online: false },
 ];
 
+const rooms = [
+  { name: "Things to do tonight", icon: "✦", count: 18, color: "#ffb8d0" },
+  { name: "Live music", icon: "♫", count: 12, color: "#bca9ff" },
+  { name: "Food & coffee", icon: "☕", count: 21, color: "#edcf78" },
+  { name: "Outdoors", icon: "☀", count: 9, color: "#91e7dc" },
+  { name: "Books & art", icon: "◌", count: 14, color: "#f5b49f" },
+];
+
+const invitations = [
+  { person: people[0], text: "I’m off this evening—anyone want to walk around the fair?", when: "Tonight", room: "Things to do tonight" },
+  { person: people[2], text: "There’s a tiny jazz show at 8. I’d love some company.", when: "Tonight", room: "Live music" },
+  { person: people[3], text: "Trying the new coffee place downtown around 3. Join me?", when: "This afternoon", room: "Food & coffee" },
+];
+
 export default function Home() {
   const [verified, setVerified] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
@@ -112,8 +126,23 @@ export default function Home() {
 
       <section className="promise-strip"><span>No swipe queue</span><span>No paid boosts</span><span>No hidden likes</span><span>No precise locations</span></section>
 
+      <section className="invites-section" id="invites">
+        <div className="section-heading"><div><p className="eyebrow">OPEN INVITATIONS</p><h2>See who wants to do something.</h2></div><p className="section-note">Short, timely posts from people who are online now. They disappear automatically, so the list always feels alive.</p></div>
+        <div className="invite-layout">
+          <div className="invite-feed">
+            {invitations.map(({ person, text, when, room }) => <article className="invite-card" key={person.name} onClick={() => verified ? hello(person) : enter()}>
+              <div className={`invite-avatar ${person.tone}`}>{verified ? person.initials : "•"}<i /></div>
+              <div><div className="invite-meta"><strong>{verified ? person.name : "Verified member"}</strong><span>{when}</span></div><p>{verified ? text : "Verify your account to read this open invitation."}</p><small>{room} · {person.area}</small></div>
+              <button aria-label={`Message ${person.name}`}>Message <span>→</span></button>
+            </article>)}
+            <button className="post-invite" onClick={verified ? () => setModal("onboarding") : enter()}><span>＋</span><div><strong>Post an open invitation</strong><small>Tell the room what you feel like doing.</small></div></button>
+          </div>
+          <aside className="interest-rooms"><p className="eyebrow">BROWSE ROOMS</p>{rooms.map(room => <button key={room.name}><span style={{ background: room.color }}>{room.icon}</span><div><strong>{room.name}</strong><small>{room.count} here now</small></div><b>→</b></button>)}</aside>
+        </div>
+      </section>
+
       <section className="room-section" id="room">
-        <div className="section-heading"><div><p className="eyebrow">THE ROOM</p><h2>Everyone here is open to meeting.</h2></div><div className="filters"><button className="active-filter">Nearby</button><button>Online recently</button><button>Long-term</button></div></div>
+        <div className="section-heading"><div><p className="eyebrow">FOOD & COFFEE ROOM</p><h2>Everyone here shares an interest.</h2></div><div className="filters"><button className="active-filter">Here now</button><button>Open invitations</button><button>Room chat</button></div></div>
         <div className={`bubble-room ${!verified ? "visitor-room" : ""}`}>
           {people.filter(person => !hiddenPeople.includes(person.name)).map((person, index) => (
             <button draggable className={`member-bubble room-bubble bubble-${index + 1} ${person.tone} ${person.online ? "is-online" : "is-offline"}`} key={person.name} onDragStart={() => setDraggingPerson(person.name)} onDragEnd={() => setDraggingPerson(null)} onClick={() => verified ? hello(person) : enter()} aria-label={verified ? `Open ${person.name} profile` : "Verify to meet people in this room"}>
@@ -124,7 +153,7 @@ export default function Home() {
               <span className="presence"><i />{person.online ? "Here now" : "Away"}</span>
             </button>
           ))}
-          <div className="room-center"><span>THE LOCAL ROOM</span><strong>{people.filter(person => person.online && !hiddenPeople.includes(person.name)).length} here now</strong><small>Move around. Notice someone. Say hello.</small></div>
+          <div className="room-center"><span>FOOD & COFFEE</span><strong>{people.filter(person => person.online && !hiddenPeople.includes(person.name)).length} here now</strong><small>Chat with the room or say hello privately.</small></div>
           <div className={`block-dock ${draggingPerson ? "is-ready" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={hideDraggedPerson}><span>×</span><strong>Hide & block</strong><small>Drag someone here for mutual invisibility</small></div>
           {hiddenPeople.length > 0 && <button className="undo-hide" onClick={() => setHiddenPeople(current => current.slice(0, -1))}>Undo last hide</button>}
         </div>
