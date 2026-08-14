@@ -1,5 +1,8 @@
 -- Meet Freely foundation: private-by-default profiles and member-only discovery.
 create extension if not exists pgcrypto;
+create schema if not exists private;
+revoke all on schema private from public, anon, authenticated;
+grant usage on schema private to authenticated;
 
 create type public.account_state as enum ('pending', 'active', 'paused', 'banned');
 create type public.verification_state as enum ('unverified', 'pending', 'verified', 'failed');
@@ -63,7 +66,7 @@ alter table public.blocks enable row level security;
 alter table public.introductions enable row level security;
 alter table public.reports enable row level security;
 
-create function public.is_verified_member(member_id uuid)
+create function private.is_verified_member(member_id uuid)
 returns boolean language sql stable security definer set search_path = '' as $$
   select exists (
     select 1 from public.accounts
@@ -72,12 +75,27 @@ returns boolean language sql stable security definer set search_path = '' as $$
   );
 $$;
 
+create function private.create_private_account()
+returns trigger language plpgsql security definer set search_path = '' as $$
+begin
+  insert into public.accounts (user_id) values (new.id);
+  return new;
+end;
+$$;
+
+create trigger create_private_account_after_signup
+after insert on auth.users
+for each row execute function private.create_private_account();
+
+revoke all on function private.create_private_account() from public, anon, authenticated;
+revoke all on function private.is_verified_member(uuid) from public, anon;
+grant execute on function private.is_verified_member(uuid) to authenticated;
+
 create policy "accounts are private" on public.accounts for select using (auth.uid() = user_id);
-create policy "members create own account" on public.accounts for insert with check (auth.uid() = user_id);
 
 create policy "owners view their profile" on public.profiles for select using (auth.uid() = user_id);
 create policy "verified members discover profiles" on public.profiles for select using (
-  discoverable and public.is_verified_member(auth.uid()) and public.is_verified_member(user_id)
+  discoverable and private.is_verified_member((select auth.uid())) and private.is_verified_member(user_id)
   and not exists (select 1 from public.blocks where (blocker_id = auth.uid() and blocked_id = user_id) or (blocker_id = user_id and blocked_id = auth.uid()))
 );
 create policy "owners create profile" on public.profiles for insert with check (auth.uid() = user_id);
@@ -86,7 +104,7 @@ create policy "owners update profile" on public.profiles for update using (auth.
 create policy "members manage own blocks" on public.blocks for all using (auth.uid() = blocker_id) with check (auth.uid() = blocker_id);
 create policy "participants view introductions" on public.introductions for select using (auth.uid() in (sender_id, recipient_id));
 create policy "verified members introduce themselves" on public.introductions for insert with check (
-  auth.uid() = sender_id and public.is_verified_member(auth.uid())
+  (select auth.uid()) = sender_id and private.is_verified_member((select auth.uid()))
   and not exists (select 1 from public.blocks where (blocker_id = sender_id and blocked_id = recipient_id) or (blocker_id = recipient_id and blocked_id = sender_id))
 );
 create policy "recipients update introductions" on public.introductions for update using (auth.uid() = recipient_id);
