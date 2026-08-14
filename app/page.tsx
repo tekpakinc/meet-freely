@@ -4,12 +4,12 @@ import { useEffect, useState } from "react";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 
 const people = [
-  { name: "CityFern", age: 31, area: "West side", note: "Museum afternoons, tiny restaurants, and laughing too loudly.", tags: ["Long-term", "Art", "Food"], initials: "CF", tone: "coral" },
-  { name: "MilesAhead", age: 34, area: "North side", note: "Weekend cyclist. Weeknight cook. Looking for something steady.", tags: ["Long-term", "Outdoors", "Cooking"], initials: "MA", tone: "sky" },
-  { name: "SundayStatic", age: 29, area: "Center city", note: "Live music, used bookstores, and a very opinionated rescue dog.", tags: ["Dating", "Music", "Dogs"], initials: "SS", tone: "gold" },
-  { name: "SoftLaunch", age: 36, area: "East side", note: "Architect, amateur potter, professional finder of good coffee.", tags: ["Relationship", "Design", "Coffee"], initials: "SL", tone: "plum" },
-  { name: "JuniperJune", age: 32, area: "South side", note: "Equal parts homebody and last-minute road trip.", tags: ["Dating", "Travel", "Books"], initials: "JJ", tone: "mint" },
-  { name: "HeyItsRae", age: 30, area: "Within 10 miles", note: "Sunday brunch host. Terrible at trivia. Excellent teammate.", tags: ["Long-term", "Friends first", "Brunch"], initials: "HR", tone: "rose" },
+  { name: "CityFern", age: 31, area: "West side", note: "Museum afternoons, tiny restaurants, and laughing too loudly.", tags: ["Long-term", "Art", "Food"], initials: "CF", tone: "coral", online: true },
+  { name: "MilesAhead", age: 34, area: "North side", note: "Weekend cyclist. Weeknight cook. Looking for something steady.", tags: ["Long-term", "Outdoors", "Cooking"], initials: "MA", tone: "sky", online: true },
+  { name: "SundayStatic", age: 29, area: "Center city", note: "Live music, used bookstores, and a very opinionated rescue dog.", tags: ["Dating", "Music", "Dogs"], initials: "SS", tone: "gold", online: true },
+  { name: "SoftLaunch", age: 36, area: "East side", note: "Architect, amateur potter, professional finder of good coffee.", tags: ["Relationship", "Design", "Coffee"], initials: "SL", tone: "plum", online: true },
+  { name: "JuniperJune", age: 32, area: "South side", note: "Equal parts homebody and last-minute road trip.", tags: ["Dating", "Travel", "Books"], initials: "JJ", tone: "mint", online: false },
+  { name: "HeyItsRae", age: 30, area: "Within 10 miles", note: "Sunday brunch host. Terrible at trivia. Excellent teammate.", tags: ["Long-term", "Friends first", "Brunch"], initials: "HR", tone: "rose", online: false },
 ];
 
 export default function Home() {
@@ -24,6 +24,8 @@ export default function Home() {
   const [authBusy, setAuthBusy] = useState(false);
   const [username, setUsername] = useState("");
   const [adultConfirmed, setAdultConfirmed] = useState(false);
+  const [hiddenPeople, setHiddenPeople] = useState<string[]>([]);
+  const [draggingPerson, setDraggingPerson] = useState<string | null>(null);
 
   useEffect(() => {
     if (!supabase) return;
@@ -63,13 +65,18 @@ export default function Home() {
     setProfileReady(true); setAuthMessage(""); setModal(null);
   };
   const signOut = async () => { await supabase?.auth.signOut(); setModal(null); };
+  const hideDraggedPerson = () => {
+    if (!draggingPerson) return;
+    setHiddenPeople(current => [...current, draggingPerson]);
+    setDraggingPerson(null);
+  };
   const hello = (person: (typeof people)[number]) => { setSelected(person); setSent(false); setModal("hello"); };
 
   return (
     <main>
       <nav className="nav">
         <a className="brand" href="#top" aria-label="Meet Freely home"><span className="brand-dot">●</span> meet freely</a>
-        <div className="nav-links"><a href="#how">How it works</a><a href="#safety">Safety</a><button className="text-button" onClick={() => signedIn ? setModal("onboarding") : enter}>{verified ? "Verified member" : signedIn ? "My account" : "Sign in"}</button></div>
+        <div className="nav-links"><a href="#how">How it works</a><a href="#safety">Safety</a><button className="text-button" onClick={() => signedIn ? setModal("onboarding") : enter()}>{verified ? "Verified member" : signedIn ? "My account" : "Sign in"}</button></div>
       </nav>
 
       <section className="hero" id="top">
@@ -86,8 +93,8 @@ export default function Home() {
 
         <div className="room-window" aria-label={verified ? "Member room preview" : "Protected visitor preview"}>
           <div className="window-top"><span>THE LOCAL ROOM</span><span className="active"><i /> 86 here recently</span></div>
-          <div className={`mini-grid ${verified ? "revealed" : "protected"}`}>
-            {people.slice(0, 4).map((person) => <div className={`mini-card ${person.tone}`} key={person.name}><div className="mini-avatar">{verified ? person.initials : ""}</div><strong>{verified ? person.name : "Verified member"}</strong><small>{verified ? `${person.age} · ${person.area}` : "Profile protected"}</small></div>)}
+          <div className={`preview-bubbles ${verified ? "revealed" : "protected"}`}>
+            {people.slice(0, 4).map((person, index) => <div className={`member-bubble preview-bubble bubble-${index + 1} ${person.tone}`} key={person.name}><div className="bubble-photo">{verified ? person.initials : "•"}</div><strong>{verified ? person.name : "Someone’s here"}</strong><small>{verified ? `${person.age} · ${person.area}` : "Identity protected"}</small></div>)}
           </div>
           {!verified && <div className="privacy-shield"><div className="lock">⌁</div><strong>People, not a public catalog.</strong><span>Verify to see who’s inside.</span><button onClick={enter}>Enter securely</button></div>}
         </div>
@@ -97,19 +104,19 @@ export default function Home() {
 
       <section className="room-section" id="room">
         <div className="section-heading"><div><p className="eyebrow">THE ROOM</p><h2>Everyone here is open to meeting.</h2></div><div className="filters"><button className="active-filter">Nearby</button><button>Online recently</button><button>Long-term</button></div></div>
-        <div className={`people-grid ${!verified ? "visitor-grid" : ""}`}>
-          {people.map((person, index) => (
-            <article className="person-card" key={person.name}>
-              <div className={`portrait ${person.tone}`}><span>{verified ? person.initials : ""}</span><div className="status">{verified ? "Open to meet" : "Protected"}</div></div>
-              <div className="person-body">
-                <div className="person-title"><h3>{verified ? person.name : `Member ${String(index + 1).padStart(2, "0")}`}</h3><span>{verified ? person.age : "18+"}</span></div>
-                <p className="area">{verified ? person.area : "Approximate area hidden"}</p>
-                <p>{verified ? person.note : "Verify your identity to view this member’s profile."}</p>
-                <div className="tags">{(verified ? person.tags : ["Verified", "Profile protected"]).map(tag => <span key={tag}>{tag}</span>)}</div>
-                <button className="hello-button" onClick={() => verified ? hello(person) : enter}>{verified ? "Say hello" : "Verify to view"}<span>↗</span></button>
-              </div>
-            </article>
+        <div className={`bubble-room ${!verified ? "visitor-room" : ""}`}>
+          {people.filter(person => !hiddenPeople.includes(person.name)).map((person, index) => (
+            <button draggable className={`member-bubble room-bubble bubble-${index + 1} ${person.tone} ${person.online ? "is-online" : "is-offline"}`} key={person.name} onDragStart={() => setDraggingPerson(person.name)} onDragEnd={() => setDraggingPerson(null)} onClick={() => verified ? hello(person) : enter()} aria-label={verified ? `Open ${person.name} profile` : "Verify to meet people in this room"}>
+              <span className="bubble-shine" />
+              <span className="bubble-photo">{verified ? person.initials : "•"}</span>
+              <strong>{verified ? person.name : "Verified person"}</strong>
+              <small>{verified ? `${person.age} · ${person.area}` : "Identity protected"}</small>
+              <span className="presence"><i />{person.online ? "Here now" : "Away"}</span>
+            </button>
           ))}
+          <div className="room-center"><span>THE LOCAL ROOM</span><strong>{people.filter(person => person.online && !hiddenPeople.includes(person.name)).length} here now</strong><small>Move around. Notice someone. Say hello.</small></div>
+          <div className={`block-dock ${draggingPerson ? "is-ready" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={hideDraggedPerson}><span>×</span><strong>Hide & block</strong><small>Drag someone here for mutual invisibility</small></div>
+          {hiddenPeople.length > 0 && <button className="undo-hide" onClick={() => setHiddenPeople(current => current.slice(0, -1))}>Undo last hide</button>}
         </div>
       </section>
 
