@@ -59,9 +59,7 @@ export default function Home() {
       setVerified(account?.state === "active" && account.verification === "verified" && account.membership_active === true);
       setModal(profile ? null : "onboarding");
     };
-    supabase.auth.getSession().then(({ data }) => refreshAccess(data.session?.user.id));
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => setTimeout(() => void refreshAccess(session?.user.id), 0));
-    return () => data.subscription.unsubscribe();
+    supabase.auth.getSession().then(({ data }) => void refreshAccess(data.session?.user.id));
   }, []);
 
   const enter = () => setModal("verify");
@@ -79,7 +77,7 @@ export default function Home() {
       return;
     }
     if (authMode === "signup" && !data.session) setAuthMessage("Account created. Check your email once to confirm it, then return here and sign in.");
-    else setModal("onboarding");
+    else { setSignedIn(true); setModal("onboarding"); }
   };
   const saveProfile = async () => {
     if (!supabase || !adultConfirmed || !username || !birthDate || !broadArea || interests.length === 0) return;
@@ -98,7 +96,7 @@ export default function Home() {
     if (error) return setAuthMessage(error.message);
     setProfileReady(true); setVerificationStatus("pending"); setAuthMessage("");
   };
-  const signOut = async () => { await supabase?.auth.signOut(); setModal(null); };
+  const signOut = async () => { await supabase?.auth.signOut(); setSignedIn(false); setVerified(false); setProfileReady(false); setModal(null); };
   const hideDraggedPerson = () => {
     if (!draggingPerson) return;
     setHiddenPeople(current => [...current, draggingPerson]);
