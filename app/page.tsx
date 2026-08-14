@@ -14,22 +14,32 @@ const people = [
 
 export default function Home() {
   const [verified, setVerified] = useState(false);
-  const [modal, setModal] = useState<"verify" | "hello" | null>(null);
+  const [signedIn, setSignedIn] = useState(false);
+  const [profileReady, setProfileReady] = useState(false);
+  const [modal, setModal] = useState<"verify" | "onboarding" | "hello" | null>(null);
   const [selected, setSelected] = useState<(typeof people)[number] | null>(null);
   const [sent, setSent] = useState(false);
   const [email, setEmail] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
+  const [username, setUsername] = useState("");
+  const [adultConfirmed, setAdultConfirmed] = useState(false);
 
   useEffect(() => {
     if (!supabase) return;
     const refreshAccess = async (userId?: string) => {
-      if (!userId) return setVerified(false);
-      const { data } = await supabase.from("accounts").select("state, verification, membership_active").eq("user_id", userId).maybeSingle();
-      setVerified(data?.state === "active" && data.verification === "verified" && data.membership_active === true);
+      setSignedIn(Boolean(userId));
+      if (!userId) { setVerified(false); setProfileReady(false); return; }
+      const [{ data: account }, { data: profile }] = await Promise.all([
+        supabase.from("accounts").select("state, verification, membership_active").eq("user_id", userId).maybeSingle(),
+        supabase.from("profiles").select("username").eq("user_id", userId).maybeSingle(),
+      ]);
+      setProfileReady(Boolean(profile));
+      setVerified(account?.state === "active" && account.verification === "verified" && account.membership_active === true);
+      setModal(profile ? null : "onboarding");
     };
     supabase.auth.getSession().then(({ data }) => refreshAccess(data.session?.user.id));
-    const { data } = supabase.auth.onAuthStateChange((_event, session) => void refreshAccess(session?.user.id));
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => setTimeout(() => void refreshAccess(session?.user.id), 0));
     return () => data.subscription.unsubscribe();
   }, []);
 
@@ -38,17 +48,28 @@ export default function Home() {
     if (!supabase || !email) return;
     setAuthBusy(true);
     setAuthMessage("");
-    const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
+    const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: `${window.location.origin}/` } });
     setAuthBusy(false);
     setAuthMessage(error ? error.message : "Check your email for a secure sign-in link.");
   };
+  const saveProfile = async () => {
+    if (!supabase || !adultConfirmed || !username) return;
+    setAuthBusy(true);
+    const { data: sessionData } = await supabase.auth.getSession();
+    const userId = sessionData.session?.user.id;
+    const { error } = userId ? await supabase.from("profiles").upsert({ user_id: userId, username }) : { error: new Error("Please sign in again.") };
+    setAuthBusy(false);
+    if (error) return setAuthMessage(error.message);
+    setProfileReady(true); setAuthMessage(""); setModal(null);
+  };
+  const signOut = async () => { await supabase?.auth.signOut(); setModal(null); };
   const hello = (person: (typeof people)[number]) => { setSelected(person); setSent(false); setModal("hello"); };
 
   return (
     <main>
       <nav className="nav">
         <a className="brand" href="#top" aria-label="Meet Freely home"><span className="brand-dot">●</span> meet freely</a>
-        <div className="nav-links"><a href="#how">How it works</a><a href="#safety">Safety</a><button className="text-button" onClick={enter}>{verified ? "Verified member" : "Visitor preview"}</button></div>
+        <div className="nav-links"><a href="#how">How it works</a><a href="#safety">Safety</a><button className="text-button" onClick={() => signedIn ? setModal("onboarding") : enter}>{verified ? "Verified member" : signedIn ? "My account" : "Sign in"}</button></div>
       </nav>
 
       <section className="hero" id="top">
@@ -57,7 +78,7 @@ export default function Home() {
           <h1>Dating should feel like <em>walking into a room.</em></h1>
           <p className="lede">Look around. Notice someone. Say hello. No swiping, hidden likes, boosts, or algorithm deciding who gets seen.</p>
           <div className="hero-actions">
-            <button className="primary" onClick={verified ? () => document.getElementById("room")?.scrollIntoView({ behavior: "smooth" }) : enter}>{verified ? "Enter the room" : "Verify to enter"}<span>→</span></button>
+            <button className="primary" onClick={verified ? () => document.getElementById("room")?.scrollIntoView({ behavior: "smooth" }) : signedIn ? () => setModal("onboarding") : enter}>{verified ? "Enter the room" : signedIn ? "Continue account setup" : "Create a private account"}<span>→</span></button>
             <span className="price">$1.99/month<br/><small>One simple membership</small></span>
           </div>
           <p className="privacy-note">Visitor Preview protects member identities. Real profiles are only visible to verified adults.</p>
@@ -126,6 +147,9 @@ export default function Home() {
           <input className="auth-input" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" aria-label="Email address" />
           <button className="primary full" onClick={sendSignInLink} disabled={!email || authBusy || !isSupabaseConfigured}>{authBusy ? "Sending…" : "Email me a sign-in link"} <span>→</span></button>
           {authMessage && <p className="auth-message" role="status">{authMessage}</p>}<small className="modal-foot">Profile access still requires adult verification and active membership.</small>
+        </> : modal === "onboarding" ? <>
+          <div className="modal-mark">✓</div><p className="eyebrow">{profileReady ? "ACCOUNT CREATED" : "ONE LAST STEP"}</p><h2>{profileReady ? "You’re in." : "Choose your username."}</h2>
+          {profileReady ? <><p>Your private account is ready. Identity verification and membership activation are the next steps before profiles become visible.</p><button className="primary full" onClick={() => setModal(null)}>Return to Meet Freely <span>→</span></button><button className="signout-button" onClick={signOut}>Sign out</button></> : <><p>This is the only name other members will see. Don’t use your surname or social handle.</p><input className="auth-input" value={username} onChange={(event) => setUsername(event.target.value.replace(/[^A-Za-z0-9_]/g, "").slice(0, 24))} placeholder="Private username" aria-label="Private username" /><label className="adult-check"><input type="checkbox" checked={adultConfirmed} onChange={(event) => setAdultConfirmed(event.target.checked)} /> I confirm I am at least 18 years old.</label><button className="primary full" onClick={saveProfile} disabled={!adultConfirmed || username.length < 3 || authBusy}>{authBusy ? "Saving…" : "Create my account"} <span>→</span></button>{authMessage && <p className="auth-message" role="status">{authMessage}</p>}</>}
         </> : <>
           <div className={`modal-avatar ${selected?.tone}`}>{selected?.initials}</div><p className="eyebrow">SAY HELLO TO {selected?.name.toUpperCase()}</p><h2>{sent ? "Hello sent." : "Start like a person."}</h2>{sent ? <p>Your introduction is waiting in their inbox. They can accept, politely pass, or report it—no awkward matching game.</p> : <><textarea defaultValue={`Your note about ${selected?.tags[1].toLowerCase()} caught my attention—what got you into it?`} aria-label="Introduction message"/><p className="character-note">Thoughtful introductions get thoughtful replies.</p><button className="primary full" onClick={() => setSent(true)}>Send introduction <span>→</span></button></>}
         </>}

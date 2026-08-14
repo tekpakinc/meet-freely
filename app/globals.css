@@ -100,6 +100,9 @@ footer p { font:italic 15px Georgia,serif; } footer div { display:flex; gap:20px
 .auth-input { width:100%; box-sizing:border-box; border:1px solid rgba(24,31,27,.2); border-radius:12px; padding:14px 16px; margin:4px 0 12px; background:#fffdf8; color:#18201b; font:inherit; }
 .auth-input:focus { outline:2px solid var(--orange); outline-offset:2px; }
 .auth-message { margin:12px 0 0; color:#315c4d; font-weight:700; }
+.adult-check { display:flex; gap:10px; align-items:flex-start; margin:4px 0 18px; font-size:13px; line-height:1.4; }
+.adult-check input { margin-top:2px; }
+.signout-button { border:0; background:transparent; text-decoration:underline; margin:16px auto 0; color:#657068; }
 textarea { width:100%; min-height:120px; resize:vertical; border:1px solid var(--ink); background:#f8f4e9; padding:15px; font:15px/1.5 Georgia,serif; }
 .character-note { font-size:11px!important; color:#6d746f; }
 @media(max-width:900px){.hero{grid-template-columns:1fr;padding-top:55px}.room-window{max-width:590px}.people-grid{grid-template-columns:1fr 1fr}.how,.safety,.pricing{grid-template-columns:1fr}.pricing{gap:50px}.price-card{width:min(420px,100%)}.nav-links a{display:none}}
