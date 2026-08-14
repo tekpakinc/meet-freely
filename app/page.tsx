@@ -25,7 +25,7 @@ export default function Home() {
   const [verified, setVerified] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
   const [profileReady, setProfileReady] = useState(false);
-  const [modal, setModal] = useState<"verify" | "onboarding" | "hello" | null>(null);
+  const [modal, setModal] = useState<"verify" | "onboarding" | "hello" | "invite" | null>(null);
   const [selected, setSelected] = useState<(typeof people)[number] | null>(null);
   const [sent, setSent] = useState(false);
   const [email, setEmail] = useState("");
@@ -38,6 +38,8 @@ export default function Home() {
   const [birthDate, setBirthDate] = useState("");
   const [interests, setInterests] = useState<string[]>([]);
   const [verificationStatus, setVerificationStatus] = useState("unverified");
+  const [inviteText, setInviteText] = useState("");
+  const [inviteRoom, setInviteRoom] = useState("Things to do tonight");
   const [adultConfirmed, setAdultConfirmed] = useState(false);
   const [hiddenPeople, setHiddenPeople] = useState<string[]>([]);
   const [draggingPerson, setDraggingPerson] = useState<string | null>(null);
@@ -97,6 +99,19 @@ export default function Home() {
     setProfileReady(true); setVerificationStatus("pending"); setAuthMessage("");
   };
   const signOut = async () => { await supabase?.auth.signOut(); setSignedIn(false); setVerified(false); setProfileReady(false); setModal(null); };
+  const postInvitation = async () => {
+    if (!supabase || inviteText.trim().length < 5) return;
+    setAuthBusy(true); setAuthMessage("");
+    const [{ data: sessionData }, { data: room, error: roomError }] = await Promise.all([
+      supabase.auth.getSession(),
+      supabase.from("rooms").select("id").eq("name", inviteRoom).single(),
+    ]);
+    const userId = sessionData.session?.user.id;
+    const { error } = userId && room ? await supabase.from("open_invitations").insert({ author_id: userId, room_id: room.id, body: inviteText.trim(), broad_area: broadArea || null }) : { error: roomError ?? new Error("Please sign in again.") };
+    setAuthBusy(false);
+    if (error) return setAuthMessage(error.message);
+    setInviteText(""); setAuthMessage("Your invitation is live for 24 hours.");
+  };
   const hideDraggedPerson = () => {
     if (!draggingPerson) return;
     setHiddenPeople(current => [...current, draggingPerson]);
@@ -150,7 +165,7 @@ export default function Home() {
               <div className="invite-avatar gold">{verified ? "SS" : "•"}<i /></div>
               <div><div className="invite-meta"><strong>{verified ? "SundayStatic" : "Verified member"}</strong><span>Tonight</span></div><p>{verified ? "There’s a tiny jazz show at 8. I’d love some company." : "Verify your account to read this open invitation."}</p><small>Live music · Center city</small></div><button>Message <span>→</span></button>
             </article>
-            <button className="post-invite" onClick={verified ? () => setModal("onboarding") : enter}><span>＋</span><div><strong>Post an open invitation</strong><small>Tell the room what you feel like doing.</small></div></button>
+            <button className="post-invite" onClick={verified ? () => { setAuthMessage(""); setModal("invite"); } : enter}><span>＋</span><div><strong>Post an open invitation</strong><small>Tell the room what you feel like doing.</small></div></button>
           </div>
           <aside className="interest-rooms"><p className="eyebrow">BROWSE ROOMS</p>{rooms.map(room => <button key={room.name}><span className={`room-icon ${room.name === "Live music" ? "plum" : room.name === "Food & coffee" ? "gold" : room.name === "Outdoors" ? "mint" : "coral"}`}>{room.icon}</span><div><strong>{room.name}</strong><small>{room.count} here now</small></div><b>→</b></button>)}</aside>
         </div>
@@ -212,6 +227,13 @@ export default function Home() {
         </> : modal === "onboarding" ? <>
           <div className="modal-mark">✓</div><p className="eyebrow">{profileReady ? "ACCOUNT STATUS" : "PRIVATE PROFILE"}</p><h2>{profileReady ? "Your place is saved." : "Make your bubble yours."}</h2>
           {profileReady ? <><div className="account-progress"><span className="done">✓ Email confirmed</span><span className="done">✓ Private profile created</span><span className={verificationStatus === "verified" ? "done" : "current"}>{verificationStatus === "verified" ? "✓" : "3"} Adult verification {verificationStatus}</span><span>4 Membership activation</span></div><p>Your profile remains invisible until adult verification and membership are active. Unverified visitors cannot view it while you wait.</p><button className="primary full" onClick={() => setModal(null)}>Return to Meet Freely <span>→</span></button><button className="signout-button" onClick={signOut}>Sign out</button></> : <><p>Use a username—not your surname or social handle. Only your broad area is shown.</p><input className="auth-input" value={username} onChange={(event) => setUsername(event.target.value.replace(/[^A-Za-z0-9_]/g, "").slice(0, 24))} placeholder="Private username" aria-label="Private username" /><input className="auth-input" value={broadArea} onChange={(event) => setBroadArea(event.target.value.slice(0, 80))} placeholder="Broad area, e.g. West side" aria-label="Broad area" /><label className="field-label">Date of birth<input className="auth-input" type="date" value={birthDate} onChange={(event) => setBirthDate(event.target.value)} /></label><div className="interest-picker">{["Food & coffee","Live music","Outdoors","Books & art","Things to do tonight"].map(item => <button type="button" className={interests.includes(item) ? "selected" : ""} key={item} onClick={() => setInterests(current => current.includes(item) ? current.filter(value => value !== item) : [...current, item])}>{item}</button>)}</div><label className="adult-check"><input type="checkbox" checked={adultConfirmed} onChange={(event) => setAdultConfirmed(event.target.checked)} /> I confirm this birth date is mine and I am at least 18 years old.</label><button className="primary full" onClick={saveProfile} disabled={!adultConfirmed || username.length < 3 || !broadArea || !birthDate || interests.length === 0 || authBusy}>{authBusy ? "Saving…" : "Submit for verification"} <span>→</span></button>{authMessage && <p className="auth-message" role="status">{authMessage}</p>}<small className="modal-foot">Your birth date is private and is never placed on your dating profile.</small></>}
+        </> : modal === "invite" ? <>
+          <div className="modal-mark">＋</div><p className="eyebrow">OPEN INVITATION</p><h2>What sounds good?</h2><p>Post a short plan for people who are online now. It automatically disappears after 24 hours.</p>
+          <label className="field-label">Interest room<select className="auth-input" value={inviteRoom} onChange={(event) => setInviteRoom(event.target.value)}>{rooms.map(room => <option key={room.name}>{room.name}</option>)}</select></label>
+          <textarea value={inviteText} onChange={(event) => setInviteText(event.target.value.slice(0, 280))} placeholder="I have tonight free—does anyone want to walk around the fair?" aria-label="Open invitation" />
+          <p className="character-note">{inviteText.length}/280 · Your precise location is never included.</p>
+          <button className="primary full" onClick={postInvitation} disabled={inviteText.trim().length < 5 || authBusy}>{authBusy ? "Posting…" : "Post for 24 hours"} <span>→</span></button>
+          {authMessage && <p className="auth-message" role="status">{authMessage}</p>}
         </> : <>
           <div className={`modal-avatar ${selected?.tone}`}>{selected?.initials}</div><p className="eyebrow">SAY HELLO TO {selected?.name.toUpperCase()}</p><h2>{sent ? "Hello sent." : "Start like a person."}</h2>{sent ? <p>Your introduction is waiting in their inbox. They can accept, politely pass, or report it—no awkward matching game.</p> : <><textarea defaultValue={`Your note about ${selected?.tags[1].toLowerCase()} caught my attention—what got you into it?`} aria-label="Introduction message"/><p className="character-note">Thoughtful introductions get thoughtful replies.</p><button className="primary full" onClick={() => setSent(true)}>Send introduction <span>→</span></button></>}
         </>}
