@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
+
+type InstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: "accepted" | "dismissed" }> };
 
 const people = [
   { name: "CityFern", age: 31, area: "West side", note: "Museum afternoons, tiny restaurants, and laughing too loudly.", tags: ["Long-term", "Art", "Food"], initials: "CF", tone: "coral", online: true },
@@ -46,6 +48,14 @@ export default function Home() {
   const [adultConfirmed, setAdultConfirmed] = useState(false);
   const [hiddenPeople, setHiddenPeople] = useState<string[]>([]);
   const [draggingPerson, setDraggingPerson] = useState<string | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<InstallPromptEvent | null>(null);
+  const [installHelpOpen, setInstallHelpOpen] = useState(false);
+  const [pinnedPeople, setPinnedPeople] = useState<string[]>([]);
+  const [locationReady, setLocationReady] = useState(false);
+  const [roomOffset, setRoomOffset] = useState({ x: 0, y: 0 });
+  const swipeStart = useRef<{ x: number; y: number } | null>(null);
+  const swipeMoved = useRef(false);
 
   useEffect(() => {
     setBrowserReady(true);
@@ -65,6 +75,12 @@ export default function Home() {
       setModal(profile ? null : "onboarding");
     };
     supabase.auth.getSession().then(({ data }) => void refreshAccess(data.session?.user.id));
+  }, []);
+
+  useEffect(() => {
+    const captureInstallPrompt = (event: Event) => { event.preventDefault(); setInstallPrompt(event as InstallPromptEvent); };
+    window.addEventListener("beforeinstallprompt", captureInstallPrompt);
+    return () => window.removeEventListener("beforeinstallprompt", captureInstallPrompt);
   }, []);
 
   const enter = () => setModal("verify");
@@ -131,13 +147,33 @@ export default function Home() {
     setDraggingPerson(null);
   };
   const hello = (person: (typeof people)[number]) => { setSelected(person); setSent(false); setModal("hello"); };
+  const installApp = async () => {
+    if (installPrompt) { await installPrompt.prompt(); await installPrompt.userChoice; setInstallPrompt(null); return; }
+    setInstallHelpOpen(true);
+  };
+  const useNearbyLocation = () => navigator.geolocation?.getCurrentPosition(() => setLocationReady(true), () => setLocationReady(false), { enableHighAccuracy: false, maximumAge: 600000, timeout: 8000 });
+  const beginRoomSwipe = (event: React.PointerEvent) => { swipeMoved.current = false; swipeStart.current = { x: event.clientX - roomOffset.x, y: event.clientY - roomOffset.y }; event.currentTarget.setPointerCapture(event.pointerId); };
+  const moveRoom = (event: React.PointerEvent) => { if (!swipeStart.current) return; const x = event.clientX - swipeStart.current.x; const y = event.clientY - swipeStart.current.y; if (Math.abs(x - roomOffset.x) > 7 || Math.abs(y - roomOffset.y) > 7) swipeMoved.current = true; setRoomOffset({ x: Math.max(-190, Math.min(190, x)), y: Math.max(-230, Math.min(230, y)) }); };
+  const endRoomSwipe = () => { swipeStart.current = null; window.setTimeout(() => { swipeMoved.current = false; }, 0); };
 
   if (!browserReady) {
     return <main className="app-loading" aria-busy="true"><div className="loading-bubble"><span>●</span><strong>meet freely</strong><small>Opening the room…</small></div></main>;
   }
 
   return (
-    <main>
+    <main className={signedIn && verified ? "member-session" : "visitor-session"}>
+      {signedIn && verified && <section className="mobile-app" aria-label="Meet Freely member room">
+        <header className="mobile-app-bar"><button className="app-menu-button" onClick={() => setMobileMenuOpen(true)} aria-label="Open app menu">☰</button><div><small>FOOD & COFFEE · {locationReady ? "NEARBY FIRST" : broadArea.toUpperCase()}</small><strong>{people.filter(person => person.online).length + 1} here now</strong></div><button className="my-mini-bubble" onClick={() => setModal("profile")} aria-label="Edit my profile">{username.slice(0, 2).toUpperCase() || "ME"}</button></header>
+        <div className="mobile-room" onPointerDown={beginRoomSwipe} onPointerMove={moveRoom} onPointerUp={endRoomSwipe} onPointerCancel={endRoomSwipe}>
+          <div className="mobile-bubble-field" style={{ transform: `translate(${roomOffset.x}px, ${roomOffset.y}px)` }}>
+          <button className="mobile-own-bubble" onClick={() => setModal("profile")}><span className="bubble-photo">{username.slice(0, 2).toUpperCase() || "ME"}</span><strong>{username || "Your bubble"}</strong><small>You · tap to edit</small><span className="presence"><i />Here now</span></button>
+          {people.filter(person => !hiddenPeople.includes(person.name)).map((person, index) => <div role="button" tabIndex={0} key={person.name} className={`mobile-member-bubble mobile-bubble-${index + 1} ${person.tone} ${person.online ? "is-online" : "is-offline"} ${pinnedPeople.includes(person.name) ? "is-pinned" : ""}`} onClick={() => { if (!swipeMoved.current) hello(person); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") hello(person); }}><button className="bubble-pin" onClick={(event) => { event.stopPropagation(); setPinnedPeople(current => current.includes(person.name) ? current.filter(name => name !== person.name) : [...current, person.name]); }} aria-label={pinnedPeople.includes(person.name) ? `Unpin ${person.name}` : `Pin ${person.name}`}>{pinnedPeople.includes(person.name) ? "●" : "⌖"}</button><span className="bubble-photo">{person.initials}</span><strong>{person.name}</strong><small>{person.age} · {person.area}</small><span className="presence"><i />{person.online ? "Here now" : "Away"}</span></div>)}
+          </div><span className="swipe-hint">Swipe the room to explore farther</span>
+          <button className="mobile-invite-action" onClick={() => { setAuthMessage(""); setModal("invite"); }}>＋ <span>Post an invitation</span></button>
+        </div>
+        {mobileMenuOpen && <><button className="drawer-scrim" onClick={() => setMobileMenuOpen(false)} aria-label="Close menu" /><aside className="app-drawer"><div className="drawer-head"><span className="brand"><i className="brand-dot">●</i> meet freely</span><button onClick={() => setMobileMenuOpen(false)} aria-label="Close menu">×</button></div><button className="nearby-control" onClick={useNearbyLocation}><span>◎</span><div><strong>{locationReady ? "Nearby sorting is on" : "Show people nearest first"}</strong><small>{locationReady ? "Approximate location stays private" : `Or keep using ${broadArea}`}</small></div></button><p className="drawer-label">ROOMS</p>{rooms.map(room => <button className="drawer-room" key={room.name} onClick={() => setMobileMenuOpen(false)}><span style={{background:room.color}}>{room.icon}</span><strong>{room.name}</strong><small>{room.count} here</small></button>)}<div className="drawer-links"><button onClick={() => { setMobileMenuOpen(false); setModal("invite"); }}>Open invitations</button><button>Messages</button><button onClick={() => { setMobileMenuOpen(false); setModal("profile"); }}>My profile</button><button onClick={installApp}>Add Meet Freely to Home Screen</button><a href="#safety" onClick={() => setMobileMenuOpen(false)}>Safety & privacy</a><button onClick={signOut}>Sign out</button></div></aside></>}
+        {installHelpOpen && <div className="install-lightbox" role="dialog" aria-modal="true"><button className="close" onClick={() => setInstallHelpOpen(false)} aria-label="Close">×</button><div className="install-icon">●</div><p className="eyebrow">KEEP THE ROOM CLOSE</p><h2>Add Meet Freely to your Home Screen</h2><p><strong>On iPhone:</strong> tap the Share button in Safari, then choose <em>Add to Home Screen</em>.</p><p><strong>On Android:</strong> open the browser menu and choose <em>Install app</em> or <em>Add to Home screen</em>.</p><button className="primary full" onClick={() => setInstallHelpOpen(false)}>Got it</button></div>}
+      </section>}
       <nav className="nav">
         <a className="brand" href="#top" aria-label="Meet Freely home"><span className="brand-dot">●</span> meet freely</a>
         <div className="nav-links"><a href="#how">How it works</a><a href="#safety">Safety</a><button className="text-button" onClick={() => signedIn ? setModal(profileReady ? "profile" : "onboarding") : enter()}>{profileReady ? "My profile" : signedIn ? "Finish profile" : "Sign in"}</button></div>
