@@ -20,6 +20,8 @@ export default function Home() {
   const [selected, setSelected] = useState<(typeof people)[number] | null>(null);
   const [sent, setSent] = useState(false);
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
   const [authMessage, setAuthMessage] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
   const [username, setUsername] = useState("");
@@ -46,13 +48,21 @@ export default function Home() {
   }, []);
 
   const enter = () => setModal("verify");
-  const sendSignInLink = async () => {
-    if (!supabase || !email) return;
+  const submitAuth = async () => {
+    if (!supabase || !email || password.length < 8) return;
     setAuthBusy(true);
     setAuthMessage("");
-    const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: `${window.location.origin}/` } });
+    const { data, error } = authMode === "signup"
+      ? await supabase.auth.signUp({ email, password, options: { emailRedirectTo: `${window.location.origin}/` } })
+      : await supabase.auth.signInWithPassword({ email, password });
     setAuthBusy(false);
-    setAuthMessage(error ? error.message : "Check your email for a secure sign-in link.");
+    if (error) {
+      const rateLimited = error.message.toLowerCase().includes("rate") || error.status === 429;
+      setAuthMessage(rateLimited ? "Email sending is temporarily paused. Please wait about an hour before creating a new account. Existing members can still sign in with their password." : error.message);
+      return;
+    }
+    if (authMode === "signup" && !data.session) setAuthMessage("Account created. Check your email once to confirm it, then return here and sign in.");
+    else setModal("onboarding");
   };
   const saveProfile = async () => {
     if (!supabase || !adultConfirmed || !username) return;
@@ -149,11 +159,12 @@ export default function Home() {
       {modal && <div className="modal-backdrop" onMouseDown={() => setModal(null)}><div className="modal" onMouseDown={e => e.stopPropagation()} role="dialog" aria-modal="true">
         <button className="close" onClick={() => setModal(null)} aria-label="Close">×</button>
         {modal === "verify" ? <>
-          <div className="modal-mark">✓</div><p className="eyebrow">PRIVATE SIGN-IN</p><h2>Come on in.</h2><p>Enter your email for a secure sign-in link. Your email and legal identity are never shown on your dating profile.</p>
-          <div className="verify-list"><span><b>1</b> Create your private account</span><span><b>2</b> Confirm you’re 18+</span><span><b>3</b> Choose a username</span></div>
+          <div className="modal-mark">✓</div><p className="eyebrow">PRIVATE ACCOUNT</p><h2>{authMode === "signin" ? "Welcome back." : "Join the room."}</h2><p>Use your email and password. Your email and legal identity are never shown on your dating profile.</p>
+          <div className="auth-tabs"><button className={authMode === "signin" ? "active" : ""} onClick={() => { setAuthMode("signin"); setAuthMessage(""); }}>Sign in</button><button className={authMode === "signup" ? "active" : ""} onClick={() => { setAuthMode("signup"); setAuthMessage(""); }}>Create account</button></div>
           <input className="auth-input" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" aria-label="Email address" />
-          <button className="primary full" onClick={sendSignInLink} disabled={!email || authBusy || !isSupabaseConfigured}>{authBusy ? "Sending…" : "Email me a sign-in link"} <span>→</span></button>
-          {authMessage && <p className="auth-message" role="status">{authMessage}</p>}<small className="modal-foot">Profile access still requires adult verification and active membership.</small>
+          <input className="auth-input" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" aria-label="Password" />
+          <button className="primary full" onClick={submitAuth} disabled={!email || password.length < 8 || authBusy || !isSupabaseConfigured}>{authBusy ? "Working…" : authMode === "signin" ? "Sign in" : "Create my private account"} <span>→</span></button>
+          {authMessage && <p className="auth-message" role="status">{authMessage}</p>}<small className="modal-foot">New accounts receive one confirmation email. Profile access still requires adult verification and active membership.</small>
         </> : modal === "onboarding" ? <>
           <div className="modal-mark">✓</div><p className="eyebrow">{profileReady ? "ACCOUNT CREATED" : "ONE LAST STEP"}</p><h2>{profileReady ? "You’re in." : "Choose your username."}</h2>
           {profileReady ? <><p>Your private account is ready. Identity verification and membership activation are the next steps before profiles become visible.</p><button className="primary full" onClick={() => setModal(null)}>Return to Meet Freely <span>→</span></button><button className="signout-button" onClick={signOut}>Sign out</button></> : <><p>This is the only name other members will see. Don’t use your surname or social handle.</p><input className="auth-input" value={username} onChange={(event) => setUsername(event.target.value.replace(/[^A-Za-z0-9_]/g, "").slice(0, 24))} placeholder="Private username" aria-label="Private username" /><label className="adult-check"><input type="checkbox" checked={adultConfirmed} onChange={(event) => setAdultConfirmed(event.target.checked)} /> I confirm I am at least 18 years old.</label><button className="primary full" onClick={saveProfile} disabled={!adultConfirmed || username.length < 3 || authBusy}>{authBusy ? "Saving…" : "Create my account"} <span>→</span></button>{authMessage && <p className="auth-message" role="status">{authMessage}</p>}</>}
