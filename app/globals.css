@@ -97,6 +97,9 @@ footer p { font:italic 15px Georgia,serif; } footer div { display:flex; gap:20px
 .verify-list { display:flex; flex-direction:column; border-top:1px solid var(--line); margin:22px 0; }
 .verify-list span { padding:13px 0; border-bottom:1px solid var(--line); font-size:13px; }.verify-list b { margin-right:12px; color:var(--orange); }
 .full { width:100%; }.modal-foot { display:block; text-align:center; margin-top:12px; color:#777; }
+.auth-input { width:100%; box-sizing:border-box; border:1px solid rgba(24,31,27,.2); border-radius:12px; padding:14px 16px; margin:4px 0 12px; background:#fffdf8; color:#18201b; font:inherit; }
+.auth-input:focus { outline:2px solid var(--orange); outline-offset:2px; }
+.auth-message { margin:12px 0 0; color:#315c4d; font-weight:700; }
 textarea { width:100%; min-height:120px; resize:vertical; border:1px solid var(--ink); background:#f8f4e9; padding:15px; font:15px/1.5 Georgia,serif; }
 .character-note { font-size:11px!important; color:#6d746f; }
 @media(max-width:900px){.hero{grid-template-columns:1fr;padding-top:55px}.room-window{max-width:590px}.people-grid{grid-template-columns:1fr 1fr}.how,.safety,.pricing{grid-template-columns:1fr}.pricing{gap:50px}.price-card{width:min(420px,100%)}.nav-links a{display:none}}

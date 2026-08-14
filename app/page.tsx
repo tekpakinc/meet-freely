@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { isSupabaseConfigured, supabase } from "./lib/supabase";
 
 const people = [
   { name: "CityFern", age: 31, area: "West side", note: "Museum afternoons, tiny restaurants, and laughing too loudly.", tags: ["Long-term", "Art", "Food"], initials: "CF", tone: "coral" },
@@ -16,9 +17,31 @@ export default function Home() {
   const [modal, setModal] = useState<"verify" | "hello" | null>(null);
   const [selected, setSelected] = useState<(typeof people)[number] | null>(null);
   const [sent, setSent] = useState(false);
+  const [email, setEmail] = useState("");
+  const [authMessage, setAuthMessage] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+
+  useEffect(() => {
+    if (!supabase) return;
+    const refreshAccess = async (userId?: string) => {
+      if (!userId) return setVerified(false);
+      const { data } = await supabase.from("accounts").select("state, verification, membership_active").eq("user_id", userId).maybeSingle();
+      setVerified(data?.state === "active" && data.verification === "verified" && data.membership_active === true);
+    };
+    supabase.auth.getSession().then(({ data }) => refreshAccess(data.session?.user.id));
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => void refreshAccess(session?.user.id));
+    return () => data.subscription.unsubscribe();
+  }, []);
 
   const enter = () => setModal("verify");
-  const completeVerification = () => { setVerified(true); setModal(null); };
+  const sendSignInLink = async () => {
+    if (!supabase || !email) return;
+    setAuthBusy(true);
+    setAuthMessage("");
+    const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
+    setAuthBusy(false);
+    setAuthMessage(error ? error.message : "Check your email for a secure sign-in link.");
+  };
   const hello = (person: (typeof people)[number]) => { setSelected(person); setSent(false); setModal("hello"); };
 
   return (
@@ -98,9 +121,11 @@ export default function Home() {
       {modal && <div className="modal-backdrop" onMouseDown={() => setModal(null)}><div className="modal" onMouseDown={e => e.stopPropagation()} role="dialog" aria-modal="true">
         <button className="close" onClick={() => setModal(null)} aria-label="Close">×</button>
         {modal === "verify" ? <>
-          <div className="modal-mark">✓</div><p className="eyebrow">MEMBER VERIFICATION</p><h2>Come on in.</h2><p>For this demo, verification is instant. In the real app, an identity partner would confirm you’re a unique adult without exposing your legal identity to other members.</p>
-          <div className="verify-list"><span><b>1</b> Confirm you’re 18+</span><span><b>2</b> Complete a quick selfie check</span><span><b>3</b> Choose a private username</span></div>
-          <button className="primary full" onClick={completeVerification}>Complete demo verification <span>→</span></button><small className="modal-foot">Demo only—no personal information is collected.</small>
+          <div className="modal-mark">✓</div><p className="eyebrow">PRIVATE SIGN-IN</p><h2>Come on in.</h2><p>Enter your email for a secure sign-in link. Your email and legal identity are never shown on your dating profile.</p>
+          <div className="verify-list"><span><b>1</b> Create your private account</span><span><b>2</b> Confirm you’re 18+</span><span><b>3</b> Choose a username</span></div>
+          <input className="auth-input" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" aria-label="Email address" />
+          <button className="primary full" onClick={sendSignInLink} disabled={!email || authBusy || !isSupabaseConfigured}>{authBusy ? "Sending…" : "Email me a sign-in link"} <span>→</span></button>
+          {authMessage && <p className="auth-message" role="status">{authMessage}</p>}<small className="modal-foot">Profile access still requires adult verification and active membership.</small>
         </> : <>
           <div className={`modal-avatar ${selected?.tone}`}>{selected?.initials}</div><p className="eyebrow">SAY HELLO TO {selected?.name.toUpperCase()}</p><h2>{sent ? "Hello sent." : "Start like a person."}</h2>{sent ? <p>Your introduction is waiting in their inbox. They can accept, politely pass, or report it—no awkward matching game.</p> : <><textarea defaultValue={`Your note about ${selected?.tags[1].toLowerCase()} caught my attention—what got you into it?`} aria-label="Introduction message"/><p className="character-note">Thoughtful introductions get thoughtful replies.</p><button className="primary full" onClick={() => setSent(true)}>Send introduction <span>→</span></button></>}
         </>}
