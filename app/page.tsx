@@ -1,0 +1,110 @@
+"use client";
+
+import { useState } from "react";
+
+const people = [
+  { name: "CityFern", age: 31, area: "West side", note: "Museum afternoons, tiny restaurants, and laughing too loudly.", tags: ["Long-term", "Art", "Food"], initials: "CF", tone: "coral" },
+  { name: "MilesAhead", age: 34, area: "North side", note: "Weekend cyclist. Weeknight cook. Looking for something steady.", tags: ["Long-term", "Outdoors", "Cooking"], initials: "MA", tone: "sky" },
+  { name: "SundayStatic", age: 29, area: "Center city", note: "Live music, used bookstores, and a very opinionated rescue dog.", tags: ["Dating", "Music", "Dogs"], initials: "SS", tone: "gold" },
+  { name: "SoftLaunch", age: 36, area: "East side", note: "Architect, amateur potter, professional finder of good coffee.", tags: ["Relationship", "Design", "Coffee"], initials: "SL", tone: "plum" },
+  { name: "JuniperJune", age: 32, area: "South side", note: "Equal parts homebody and last-minute road trip.", tags: ["Dating", "Travel", "Books"], initials: "JJ", tone: "mint" },
+  { name: "HeyItsRae", age: 30, area: "Within 10 miles", note: "Sunday brunch host. Terrible at trivia. Excellent teammate.", tags: ["Long-term", "Friends first", "Brunch"], initials: "HR", tone: "rose" },
+];
+
+export default function Home() {
+  const [verified, setVerified] = useState(false);
+  const [modal, setModal] = useState<"verify" | "hello" | null>(null);
+  const [selected, setSelected] = useState<(typeof people)[number] | null>(null);
+  const [sent, setSent] = useState(false);
+
+  const enter = () => setModal("verify");
+  const completeVerification = () => { setVerified(true); setModal(null); };
+  const hello = (person: (typeof people)[number]) => { setSelected(person); setSent(false); setModal("hello"); };
+
+  return (
+    <main>
+      <nav className="nav">
+        <a className="brand" href="#top" aria-label="Meet Freely home"><span className="brand-dot">●</span> meet freely</a>
+        <div className="nav-links"><a href="#how">How it works</a><a href="#safety">Safety</a><button className="text-button" onClick={enter}>{verified ? "Verified member" : "Visitor preview"}</button></div>
+      </nav>
+
+      <section className="hero" id="top">
+        <div className="hero-copy">
+          <p className="eyebrow"><span className="live-dot" /> 86 people are open to meeting nearby</p>
+          <h1>Dating should feel like <em>walking into a room.</em></h1>
+          <p className="lede">Look around. Notice someone. Say hello. No swiping, hidden likes, boosts, or algorithm deciding who gets seen.</p>
+          <div className="hero-actions">
+            <button className="primary" onClick={verified ? () => document.getElementById("room")?.scrollIntoView({ behavior: "smooth" }) : enter}>{verified ? "Enter the room" : "Verify to enter"}<span>→</span></button>
+            <span className="price">$1.99/month<br/><small>One simple membership</small></span>
+          </div>
+          <p className="privacy-note">Visitor Preview protects member identities. Real profiles are only visible to verified adults.</p>
+        </div>
+
+        <div className="room-window" aria-label={verified ? "Member room preview" : "Protected visitor preview"}>
+          <div className="window-top"><span>THE LOCAL ROOM</span><span className="active"><i /> 86 here recently</span></div>
+          <div className={`mini-grid ${verified ? "revealed" : "protected"}`}>
+            {people.slice(0, 4).map((person) => <div className={`mini-card ${person.tone}`} key={person.name}><div className="mini-avatar">{verified ? person.initials : ""}</div><strong>{verified ? person.name : "Verified member"}</strong><small>{verified ? `${person.age} · ${person.area}` : "Profile protected"}</small></div>)}
+          </div>
+          {!verified && <div className="privacy-shield"><div className="lock">⌁</div><strong>People, not a public catalog.</strong><span>Verify to see who’s inside.</span><button onClick={enter}>Enter securely</button></div>}
+        </div>
+      </section>
+
+      <section className="promise-strip"><span>No swipe queue</span><span>No paid boosts</span><span>No hidden likes</span><span>No precise locations</span></section>
+
+      <section className="room-section" id="room">
+        <div className="section-heading"><div><p className="eyebrow">THE ROOM</p><h2>Everyone here is open to meeting.</h2></div><div className="filters"><button className="active-filter">Nearby</button><button>Online recently</button><button>Long-term</button></div></div>
+        <div className={`people-grid ${!verified ? "visitor-grid" : ""}`}>
+          {people.map((person, index) => (
+            <article className="person-card" key={person.name}>
+              <div className={`portrait ${person.tone}`}><span>{verified ? person.initials : ""}</span><div className="status">{verified ? "Open to meet" : "Protected"}</div></div>
+              <div className="person-body">
+                <div className="person-title"><h3>{verified ? person.name : `Member ${String(index + 1).padStart(2, "0")}`}</h3><span>{verified ? person.age : "18+"}</span></div>
+                <p className="area">{verified ? person.area : "Approximate area hidden"}</p>
+                <p>{verified ? person.note : "Verify your identity to view this member’s profile."}</p>
+                <div className="tags">{(verified ? person.tags : ["Verified", "Profile protected"]).map(tag => <span key={tag}>{tag}</span>)}</div>
+                <button className="hello-button" onClick={() => verified ? hello(person) : enter}>{verified ? "Say hello" : "Verify to view"}<span>↗</span></button>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="how" id="how">
+        <div className="how-intro"><p className="eyebrow">HOW IT WORKS</p><h2>No matching machinery.<br/>Just a better room.</h2><p>Meet Freely gives adults the freedom to discover and approach each other—while protecting the people inside from spectators.</p></div>
+        <div className="steps">
+          <article><b>01</b><h3>Verify once</h3><p>A quick age and identity check keeps the room human. Your legal identity is never shown to members.</p></article>
+          <article><b>02</b><h3>Look around</h3><p>Browse the whole room using filters you control. Choose chronological discovery whenever you want.</p></article>
+          <article><b>03</b><h3>Say hello</h3><p>Send a thoughtful introduction directly. No mutual swipe or payment to reveal interest.</p></article>
+        </div>
+      </section>
+
+      <section className="safety" id="safety">
+        <div><p className="eyebrow light">PRIVACY BY DESIGN</p><h2>Open inside.<br/>Opaque outside.</h2></div>
+        <div className="safety-list">
+          <p><span>01</span><strong>Usernames, never surnames</strong><small>Profiles actively prevent identifying details.</small></p>
+          <p><span>02</span><strong>Broad areas, never exact distance</strong><small>No pins, trails, or “0.4 miles away.”</small></p>
+          <p><span>03</span><strong>Visitors see activity, not people</strong><small>Real photos and profiles require verification.</small></p>
+          <p><span>04</span><strong>Mutual invisibility after blocking</strong><small>A block removes both people from view.</small></p>
+        </div>
+      </section>
+
+      <section className="pricing">
+        <div><p className="eyebrow">ONE FAIR PRICE</p><h2>We charge for the room.<br/>Never for someone’s affection.</h2></div>
+        <div className="price-card"><span>Verified membership</span><strong><sup>$</sup>1.99<small>/month</small></strong><ul><li>See everyone in your rooms</li><li>Send and receive introductions</li><li>See every like—immediately</li><li>No ads, boosts, or visibility tiers</li></ul><button className="primary dark" onClick={enter}>Join the room <span>→</span></button><small>Cancel anytime. No surprise upgrades.</small></div>
+      </section>
+
+      <footer><a className="brand" href="#top"><span className="brand-dot">●</span> meet freely</a><p>Meet freely. No match required.</p><div><a href="#safety">Safety</a><a href="#">Community rules</a><a href="#">Privacy</a></div></footer>
+
+      {modal && <div className="modal-backdrop" onMouseDown={() => setModal(null)}><div className="modal" onMouseDown={e => e.stopPropagation()} role="dialog" aria-modal="true">
+        <button className="close" onClick={() => setModal(null)} aria-label="Close">×</button>
+        {modal === "verify" ? <>
+          <div className="modal-mark">✓</div><p className="eyebrow">MEMBER VERIFICATION</p><h2>Come on in.</h2><p>For this demo, verification is instant. In the real app, an identity partner would confirm you’re a unique adult without exposing your legal identity to other members.</p>
+          <div className="verify-list"><span><b>1</b> Confirm you’re 18+</span><span><b>2</b> Complete a quick selfie check</span><span><b>3</b> Choose a private username</span></div>
+          <button className="primary full" onClick={completeVerification}>Complete demo verification <span>→</span></button><small className="modal-foot">Demo only—no personal information is collected.</small>
+        </> : <>
+          <div className={`modal-avatar ${selected?.tone}`}>{selected?.initials}</div><p className="eyebrow">SAY HELLO TO {selected?.name.toUpperCase()}</p><h2>{sent ? "Hello sent." : "Start like a person."}</h2>{sent ? <p>Your introduction is waiting in their inbox. They can accept, politely pass, or report it—no awkward matching game.</p> : <><textarea defaultValue={`Your note about ${selected?.tags[1].toLowerCase()} caught my attention—what got you into it?`} aria-label="Introduction message"/><p className="character-note">Thoughtful introductions get thoughtful replies.</p><button className="primary full" onClick={() => setSent(true)}>Send introduction <span>→</span></button></>}
+        </>}
+      </div></div>}
+    </main>
+  );
+}
