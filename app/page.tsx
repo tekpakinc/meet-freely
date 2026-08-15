@@ -258,7 +258,7 @@ export default function Home() {
           <p className="lede">Look around. Notice someone. Say hello. No swiping, hidden likes, boosts, or algorithm deciding who gets seen.</p>
           <div className="hero-actions">
             <button className="primary" onClick={verified ? () => document.getElementById("room")?.scrollIntoView({ behavior: "smooth" }) : signedIn ? () => setModal("onboarding") : enter}>{verified ? "Enter the room" : signedIn ? "Continue account setup" : "Create a private account"}<span>→</span></button>
-            <span className="price">$1.99/month<br/><small>One simple membership</small></span>
+            <span className="price">$2.99/month<br/><small>One simple membership</small></span>
           </div>
           <p className="privacy-note">Visitor Preview protects member identities. Real profiles are only visible to verified adults.</p>
         </div>
@@ -331,7 +331,7 @@ export default function Home() {
 
       <section className="pricing">
         <div><p className="eyebrow">ONE FAIR PRICE</p><h2>We charge for the room.<br/>Never for someone’s affection.</h2></div>
-        <div className="price-card"><span>Verified membership</span><strong><sup>$</sup>1.99<small>/month</small></strong><ul><li>See everyone in your rooms</li><li>Send and receive introductions</li><li>See every like—immediately</li><li>No ads, boosts, or visibility tiers</li></ul><button className="primary dark" onClick={enter}>Join the room <span>→</span></button><small>Cancel anytime. No surprise upgrades.</small></div>
+        <div className="price-card"><span>Verified membership</span><strong><sup>$</sup>2.99<small>/month</small></strong><ul><li>See everyone in your rooms</li><li>Send and receive introductions</li><li>See every like—immediately</li><li>No ads, boosts, or visibility tiers</li></ul><button className="primary dark" onClick={enter}>Join the room <span>→</span></button><small>Cancel anytime. No surprise upgrades.</small></div>
       </section>
 
       <footer><a className="brand" href="#top"><span className="brand-dot">●</span> meet freely</a><p>Meet freely. No match required.</p><div><a href="#safety">Safety</a><a href="#">Community rules</a><a href="#">Privacy</a></div></footer>
