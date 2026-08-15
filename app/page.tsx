@@ -38,7 +38,7 @@ export default function Home() {
   const [verified, setVerified] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
   const [profileReady, setProfileReady] = useState(false);
-  const [modal, setModal] = useState<"verify" | "onboarding" | "profile" | "hello" | "invite" | null>(null);
+  const [modal, setModal] = useState<"verify" | "onboarding" | "profile" | "hello" | "invite" | "messages" | null>(null);
   const [selected, setSelected] = useState<(typeof people)[number] | null>(null);
   const [sent, setSent] = useState(false);
   const [email, setEmail] = useState("");
@@ -69,6 +69,8 @@ export default function Home() {
   const swipeMoved = useRef(false);
   const [photos, setPhotos] = useState<ProfilePhoto[]>([]);
   const [photoBusy, setPhotoBusy] = useState(false);
+  const [activeRoom, setActiveRoom] = useState("Food & coffee");
+  const [swipeHintVisible, setSwipeHintVisible] = useState(true);
 
   const loadPhotos = async (userId: string) => {
     if (!supabase) return;
@@ -106,6 +108,16 @@ export default function Home() {
     window.addEventListener("beforeinstallprompt", captureInstallPrompt);
     return () => window.removeEventListener("beforeinstallprompt", captureInstallPrompt);
   }, []);
+
+  useEffect(() => {
+    const savedPins = window.localStorage.getItem("meet-freely-pins");
+    if (savedPins) { try { setPinnedPeople(JSON.parse(savedPins)); } catch { window.localStorage.removeItem("meet-freely-pins"); } }
+    const closeOverlays = (event: KeyboardEvent) => { if (event.key === "Escape") { setModal(null); setMobileMenuOpen(false); setInstallHelpOpen(false); } };
+    window.addEventListener("keydown", closeOverlays);
+    return () => window.removeEventListener("keydown", closeOverlays);
+  }, []);
+
+  useEffect(() => { window.localStorage.setItem("meet-freely-pins", JSON.stringify(pinnedPeople)); }, [pinnedPeople]);
 
   const enter = () => setModal("verify");
   const submitAuth = async () => {
@@ -177,7 +189,7 @@ export default function Home() {
   };
   const useNearbyLocation = () => navigator.geolocation?.getCurrentPosition(() => setLocationReady(true), () => setLocationReady(false), { enableHighAccuracy: false, maximumAge: 600000, timeout: 8000 });
   const beginRoomSwipe = (event: React.PointerEvent) => { swipeMoved.current = false; swipeStart.current = { x: event.clientX - roomOffset.x, y: event.clientY - roomOffset.y }; event.currentTarget.setPointerCapture(event.pointerId); };
-  const moveRoom = (event: React.PointerEvent) => { if (!swipeStart.current) return; const x = event.clientX - swipeStart.current.x; const y = event.clientY - swipeStart.current.y; if (Math.abs(x - roomOffset.x) > 7 || Math.abs(y - roomOffset.y) > 7) swipeMoved.current = true; setRoomOffset({ x: Math.max(-190, Math.min(190, x)), y: Math.max(-230, Math.min(230, y)) }); };
+  const moveRoom = (event: React.PointerEvent) => { if (!swipeStart.current) return; const x = event.clientX - swipeStart.current.x; const y = event.clientY - swipeStart.current.y; if (Math.abs(x - roomOffset.x) > 7 || Math.abs(y - roomOffset.y) > 7) { swipeMoved.current = true; setSwipeHintVisible(false); } setRoomOffset({ x: Math.max(-190, Math.min(190, x)), y: Math.max(-230, Math.min(230, y)) }); };
   const endRoomSwipe = () => { swipeStart.current = null; window.setTimeout(() => { swipeMoved.current = false; }, 0); };
   const uploadPhoto = async (file?: File) => {
     if (!supabase || !file || photos.length >= 5) return;
@@ -213,6 +225,8 @@ export default function Home() {
     if (!error) await loadPhotos(userId); setAuthMessage(error?.message ?? "Photo removed."); setPhotoBusy(false);
   };
   const primaryPhoto = photos.find(photo => photo.is_primary) ?? photos[0];
+  const activeRoomDetails = rooms.find(room => room.name === activeRoom) ?? rooms[2];
+  const openMyProfile = () => { setAuthMessage(""); setModal("profile"); };
 
   if (!browserReady) {
     return <main className="app-loading" aria-busy="true"><div className="loading-bubble"><span>●</span><strong>meet freely</strong><small>Opening the room…</small></div></main>;
@@ -221,15 +235,15 @@ export default function Home() {
   return (
     <main className={signedIn && verified ? "member-session" : "visitor-session"}>
       {signedIn && verified && <section className="mobile-app" aria-label="Meet Freely member room">
-        <header className="mobile-app-bar"><button className="app-menu-button" onClick={() => setMobileMenuOpen(true)} aria-label="Open app menu">☰</button><div><small>FOOD & COFFEE · {locationReady ? "NEARBY FIRST" : broadArea.toUpperCase()}</small><strong>{people.filter(person => person.online).length + 1} here now</strong></div><button className="my-mini-bubble" onClick={() => setModal("profile")} aria-label="Edit my profile">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your profile" /> : username.slice(0, 2).toUpperCase() || "ME"}</button></header>
+        <header className="mobile-app-bar"><button className="app-menu-button" onClick={() => setMobileMenuOpen(true)} aria-label="Open app menu">☰</button><div><small>{activeRoom.toUpperCase()} · {locationReady ? "NEARBY FIRST" : broadArea.toUpperCase()}</small><strong>{activeRoomDetails.count + 1} here recently</strong></div><button className="my-mini-bubble" onClick={openMyProfile} aria-label="Edit my profile">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your profile" /> : username.slice(0, 2).toUpperCase() || "ME"}</button></header>
         <div className="mobile-room" onPointerDown={beginRoomSwipe} onPointerMove={moveRoom} onPointerUp={endRoomSwipe} onPointerCancel={endRoomSwipe}>
           <div className="mobile-bubble-field" style={{ transform: `translate(${roomOffset.x}px, ${roomOffset.y}px)` }}>
-          <button className="mobile-own-bubble" onClick={() => setModal("profile")}><span className="bubble-photo">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your primary profile" /> : username.slice(0, 2).toUpperCase() || "ME"}</span><strong>{username || "Your bubble"}</strong><small>You · tap to edit</small><span className="presence"><i />Here now</span></button>
+          <button className="mobile-own-bubble" onClick={openMyProfile}><span className="bubble-photo">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your primary profile" /> : username.slice(0, 2).toUpperCase() || "ME"}</span><strong>{username || "Your bubble"}</strong><small>You · tap to edit</small><span className="presence"><i />Here now</span></button>
           {people.filter(person => !hiddenPeople.includes(person.name)).map((person, index) => <div role="button" tabIndex={0} key={person.name} className={`mobile-member-bubble mobile-bubble-${index + 1} ${person.tone} ${person.online ? "is-online" : "is-offline"} ${pinnedPeople.includes(person.name) ? "is-pinned" : ""}`} onClick={() => { if (!swipeMoved.current) hello(person); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") hello(person); }}><button className="bubble-pin" onClick={(event) => { event.stopPropagation(); setPinnedPeople(current => current.includes(person.name) ? current.filter(name => name !== person.name) : [...current, person.name]); }} aria-label={pinnedPeople.includes(person.name) ? `Unpin ${person.name}` : `Pin ${person.name}`}>{pinnedPeople.includes(person.name) ? "●" : "⌖"}</button><span className="bubble-photo sample-photo" style={{backgroundPosition:person.photoPosition}} /><strong>{person.name}</strong><small>{person.age} · {person.area}</small><span className="presence"><i />{person.online ? "Here now" : "Away"}</span></div>)}
-          </div><span className="swipe-hint">Swipe the room to explore farther</span>
+          </div>{swipeHintVisible && <span className="swipe-hint">Swipe the room to explore farther</span>}
           <button className="mobile-invite-action" onClick={() => { setAuthMessage(""); setModal("invite"); }}>＋ <span>Post an invitation</span></button>
         </div>
-        {mobileMenuOpen && <><button className="drawer-scrim" onClick={() => setMobileMenuOpen(false)} aria-label="Close menu" /><aside className="app-drawer"><div className="drawer-head"><span className="brand"><i className="brand-dot">●</i> meet freely</span><button onClick={() => setMobileMenuOpen(false)} aria-label="Close menu">×</button></div><button className="nearby-control" onClick={useNearbyLocation}><span>◎</span><div><strong>{locationReady ? "Nearby sorting is on" : "Show people nearest first"}</strong><small>{locationReady ? "Approximate location stays private" : `Or keep using ${broadArea}`}</small></div></button><p className="drawer-label">ROOMS</p>{rooms.map(room => <button className="drawer-room" key={room.name} onClick={() => setMobileMenuOpen(false)}><span style={{background:room.color}}>{room.icon}</span><strong>{room.name}</strong><small>{room.count} here</small></button>)}<div className="drawer-links"><button onClick={() => { setMobileMenuOpen(false); setModal("invite"); }}>Open invitations</button><button>Messages</button><button onClick={() => { setMobileMenuOpen(false); setModal("profile"); }}>My profile</button><button onClick={installApp}>Add Meet Freely to Home Screen</button><a href="#safety" onClick={() => setMobileMenuOpen(false)}>Safety & privacy</a><button onClick={signOut}>Sign out</button></div></aside></>}
+        {mobileMenuOpen && <><button className="drawer-scrim" onClick={() => setMobileMenuOpen(false)} aria-label="Close menu" /><aside className="app-drawer" aria-label="App menu"><div className="drawer-head"><span className="brand"><i className="brand-dot">●</i> meet freely</span><button onClick={() => setMobileMenuOpen(false)} aria-label="Close menu">×</button></div><button className="nearby-control" onClick={useNearbyLocation}><span>◎</span><div><strong>{locationReady ? "Nearby sorting is on" : "Show people nearest first"}</strong><small>{locationReady ? "Approximate location stays private" : `Or keep using ${broadArea}`}</small></div></button><p className="drawer-label">ROOMS</p>{rooms.map(room => <button className={`drawer-room ${activeRoom === room.name ? "is-active" : ""}`} aria-current={activeRoom === room.name ? "page" : undefined} key={room.name} onClick={() => { setActiveRoom(room.name); setRoomOffset({x:0,y:0}); setSwipeHintVisible(true); setMobileMenuOpen(false); }}><span style={{background:room.color}}>{room.icon}</span><strong>{room.name}</strong><small>{room.count} here</small></button>)}<div className="drawer-links"><button onClick={() => { setMobileMenuOpen(false); setModal("invite"); }}>Open invitations</button><button onClick={() => { setMobileMenuOpen(false); setModal("messages"); }}>Messages <span className="menu-badge">0</span></button><button onClick={() => { setMobileMenuOpen(false); openMyProfile(); }}>My profile</button><button onClick={installApp}>Add Meet Freely to Home Screen</button><a href="#safety" onClick={() => setMobileMenuOpen(false)}>Safety & privacy</a><button onClick={signOut}>Sign out</button></div></aside></>}
         {installHelpOpen && <div className="install-lightbox" role="dialog" aria-modal="true"><button className="close" onClick={() => setInstallHelpOpen(false)} aria-label="Close">×</button><div className="install-icon">●</div><p className="eyebrow">KEEP THE ROOM CLOSE</p><h2>Add Meet Freely to your Home Screen</h2><p><strong>On iPhone:</strong> tap the Share button in Safari, then choose <em>Add to Home Screen</em>.</p><p><strong>On Android:</strong> open the browser menu and choose <em>Install app</em> or <em>Add to Home screen</em>.</p><button className="primary full" onClick={() => setInstallHelpOpen(false)}>Got it</button></div>}
       </section>}
       <nav className="nav">
@@ -348,6 +362,8 @@ export default function Home() {
           <label className="adult-check visibility-check"><input type="checkbox" checked={discoverable} onChange={(event) => setDiscoverable(event.target.checked)} /><span><strong>Show my bubble in rooms</strong><small>Only verified members can open it. Turn this off anytime to step out of view.</small></span></label>
           <button className="primary full" onClick={updateProfile} disabled={username.length < 3 || !broadArea || interests.length === 0 || authBusy}>{authBusy ? "Saving…" : "Save my profile"} <span>→</span></button>
           {authMessage && <p className="auth-message" role="status">{authMessage}</p>}<button className="signout-button" onClick={signOut}>Sign out</button>
+        </> : modal === "messages" ? <>
+          <div className="modal-mark">↗</div><p className="eyebrow">INTRODUCTIONS</p><h2>Your conversations start here.</h2><div className="empty-messages"><div>✦</div><strong>No messages yet</strong><p>When someone replies to an introduction—or sends one to you—it will appear here without a matching game.</p></div><button className="primary full" onClick={() => { setModal(null); document.getElementById("room")?.scrollIntoView(); }}>Return to the room <span>→</span></button>
         </> : modal === "invite" ? <>
           <div className="modal-mark">＋</div><p className="eyebrow">OPEN INVITATION</p><h2>What sounds good?</h2><p>Post a short plan for people who are online now. It automatically disappears after 24 hours.</p>
           <label className="field-label">Interest room<select className="auth-input" value={inviteRoom} onChange={(event) => setInviteRoom(event.target.value)}>{rooms.map(room => <option key={room.name}>{room.name}</option>)}</select></label>
