@@ -4,6 +4,17 @@ import { useEffect, useRef, useState } from "react";
 import { isSupabaseConfigured, supabase } from "./lib/supabase";
 
 type InstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: "accepted" | "dismissed" }> };
+type ProfilePhoto = { id: string; storage_path: string; is_primary: boolean; position: number; url: string };
+
+async function prepareProfilePhoto(file: File) {
+  const image = await createImageBitmap(file);
+  const scale = Math.min(1, 1400 / Math.max(image.width, image.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(image.width * scale); canvas.height = Math.round(image.height * scale);
+  canvas.getContext("2d")?.drawImage(image, 0, 0, canvas.width, canvas.height);
+  image.close();
+  return await new Promise<Blob>((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("We couldn’t prepare that photo.")), "image/jpeg", .84));
+}
 
 const people = [
   { name: "CityFern", age: 31, area: "West side", note: "Museum afternoons, tiny restaurants, and laughing too loudly.", tags: ["Long-term", "Art", "Food"], initials: "CF", tone: "coral", online: true },
@@ -56,6 +67,18 @@ export default function Home() {
   const [roomOffset, setRoomOffset] = useState({ x: 0, y: 0 });
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
   const swipeMoved = useRef(false);
+  const [photos, setPhotos] = useState<ProfilePhoto[]>([]);
+  const [photoBusy, setPhotoBusy] = useState(false);
+
+  const loadPhotos = async (userId: string) => {
+    if (!supabase) return;
+    const { data } = await supabase.from("profile_photos").select("id, storage_path, is_primary, position").eq("user_id", userId).order("position");
+    const withUrls = await Promise.all((data ?? []).map(async photo => {
+      const { data: signed } = await supabase.storage.from("profile-photos").createSignedUrl(photo.storage_path, 3600);
+      return { ...photo, url: signed?.signedUrl ?? "" };
+    }));
+    setPhotos(withUrls);
+  };
 
   useEffect(() => {
     setBrowserReady(true);
@@ -72,6 +95,7 @@ export default function Home() {
       if (profile) { setUsername(profile.username); setBroadArea(profile.broad_area ?? ""); setInterests(profile.interests ?? []); setBio(profile.bio ?? ""); setIntention(profile.intentions?.[0] ?? ""); setDiscoverable(profile.discoverable ?? false); }
       setVerificationStatus(request?.status ?? account?.verification ?? "unverified");
       setVerified(account?.state === "active" && account.verification === "verified" && account.membership_active === true);
+      if (profile) await loadPhotos(userId);
       setModal(profile ? null : "onboarding");
     };
     supabase.auth.getSession().then(({ data }) => void refreshAccess(data.session?.user.id));
@@ -155,6 +179,40 @@ export default function Home() {
   const beginRoomSwipe = (event: React.PointerEvent) => { swipeMoved.current = false; swipeStart.current = { x: event.clientX - roomOffset.x, y: event.clientY - roomOffset.y }; event.currentTarget.setPointerCapture(event.pointerId); };
   const moveRoom = (event: React.PointerEvent) => { if (!swipeStart.current) return; const x = event.clientX - swipeStart.current.x; const y = event.clientY - swipeStart.current.y; if (Math.abs(x - roomOffset.x) > 7 || Math.abs(y - roomOffset.y) > 7) swipeMoved.current = true; setRoomOffset({ x: Math.max(-190, Math.min(190, x)), y: Math.max(-230, Math.min(230, y)) }); };
   const endRoomSwipe = () => { swipeStart.current = null; window.setTimeout(() => { swipeMoved.current = false; }, 0); };
+  const uploadPhoto = async (file?: File) => {
+    if (!supabase || !file || photos.length >= 5) return;
+    if (!file.type.startsWith("image/") || file.size > 10 * 1024 * 1024) return setAuthMessage("Choose a JPG, PNG, or WebP image under 10 MB.");
+    setPhotoBusy(true); setAuthMessage("");
+    try {
+      const { data: sessionData } = await supabase.auth.getSession(); const userId = sessionData.session?.user.id;
+      if (!userId) throw new Error("Please sign in again.");
+      const prepared = await prepareProfilePhoto(file); const path = `${userId}/${crypto.randomUUID()}.jpg`;
+      const { error: uploadError } = await supabase.storage.from("profile-photos").upload(path, prepared, { contentType: "image/jpeg", cacheControl: "3600" });
+      if (uploadError) throw uploadError;
+      const { error: rowError } = await supabase.from("profile_photos").insert({ user_id: userId, storage_path: path, position: photos.length, is_primary: photos.length === 0 });
+      if (rowError) { await supabase.storage.from("profile-photos").remove([path]); throw rowError; }
+      await loadPhotos(userId); setAuthMessage("Photo added. Location metadata was removed for privacy.");
+    } catch (error) { setAuthMessage(error instanceof Error ? error.message : "Photo upload failed."); }
+    setPhotoBusy(false);
+  };
+  const makePrimaryPhoto = async (photoId: string) => {
+    if (!supabase) return; setPhotoBusy(true); setAuthMessage("");
+    const { data: sessionData } = await supabase.auth.getSession(); const userId = sessionData.session?.user.id;
+    if (!userId) { setPhotoBusy(false); return; }
+    const { error: clearError } = await supabase.from("profile_photos").update({ is_primary: false }).eq("user_id", userId);
+    const { error } = clearError ? { error: clearError } : await supabase.from("profile_photos").update({ is_primary: true }).eq("id", photoId).eq("user_id", userId);
+    if (!error) await loadPhotos(userId); setAuthMessage(error?.message ?? "Primary bubble photo updated."); setPhotoBusy(false);
+  };
+  const removePhoto = async (photo: ProfilePhoto) => {
+    if (!supabase) return; setPhotoBusy(true); setAuthMessage("");
+    const { data: sessionData } = await supabase.auth.getSession(); const userId = sessionData.session?.user.id;
+    if (!userId) { setPhotoBusy(false); return; }
+    const { error } = await supabase.storage.from("profile-photos").remove([photo.storage_path]);
+    if (!error) await supabase.from("profile_photos").delete().eq("id", photo.id).eq("user_id", userId);
+    const remaining = photos.filter(item => item.id !== photo.id); if (!error && photo.is_primary && remaining[0]) await supabase.from("profile_photos").update({ is_primary: true }).eq("id", remaining[0].id).eq("user_id", userId);
+    if (!error) await loadPhotos(userId); setAuthMessage(error?.message ?? "Photo removed."); setPhotoBusy(false);
+  };
+  const primaryPhoto = photos.find(photo => photo.is_primary) ?? photos[0];
 
   if (!browserReady) {
     return <main className="app-loading" aria-busy="true"><div className="loading-bubble"><span>●</span><strong>meet freely</strong><small>Opening the room…</small></div></main>;
@@ -163,10 +221,10 @@ export default function Home() {
   return (
     <main className={signedIn && verified ? "member-session" : "visitor-session"}>
       {signedIn && verified && <section className="mobile-app" aria-label="Meet Freely member room">
-        <header className="mobile-app-bar"><button className="app-menu-button" onClick={() => setMobileMenuOpen(true)} aria-label="Open app menu">☰</button><div><small>FOOD & COFFEE · {locationReady ? "NEARBY FIRST" : broadArea.toUpperCase()}</small><strong>{people.filter(person => person.online).length + 1} here now</strong></div><button className="my-mini-bubble" onClick={() => setModal("profile")} aria-label="Edit my profile">{username.slice(0, 2).toUpperCase() || "ME"}</button></header>
+        <header className="mobile-app-bar"><button className="app-menu-button" onClick={() => setMobileMenuOpen(true)} aria-label="Open app menu">☰</button><div><small>FOOD & COFFEE · {locationReady ? "NEARBY FIRST" : broadArea.toUpperCase()}</small><strong>{people.filter(person => person.online).length + 1} here now</strong></div><button className="my-mini-bubble" onClick={() => setModal("profile")} aria-label="Edit my profile">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your profile" /> : username.slice(0, 2).toUpperCase() || "ME"}</button></header>
         <div className="mobile-room" onPointerDown={beginRoomSwipe} onPointerMove={moveRoom} onPointerUp={endRoomSwipe} onPointerCancel={endRoomSwipe}>
           <div className="mobile-bubble-field" style={{ transform: `translate(${roomOffset.x}px, ${roomOffset.y}px)` }}>
-          <button className="mobile-own-bubble" onClick={() => setModal("profile")}><span className="bubble-photo">{username.slice(0, 2).toUpperCase() || "ME"}</span><strong>{username || "Your bubble"}</strong><small>You · tap to edit</small><span className="presence"><i />Here now</span></button>
+          <button className="mobile-own-bubble" onClick={() => setModal("profile")}><span className="bubble-photo">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your primary profile" /> : username.slice(0, 2).toUpperCase() || "ME"}</span><strong>{username || "Your bubble"}</strong><small>You · tap to edit</small><span className="presence"><i />Here now</span></button>
           {people.filter(person => !hiddenPeople.includes(person.name)).map((person, index) => <div role="button" tabIndex={0} key={person.name} className={`mobile-member-bubble mobile-bubble-${index + 1} ${person.tone} ${person.online ? "is-online" : "is-offline"} ${pinnedPeople.includes(person.name) ? "is-pinned" : ""}`} onClick={() => { if (!swipeMoved.current) hello(person); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") hello(person); }}><button className="bubble-pin" onClick={(event) => { event.stopPropagation(); setPinnedPeople(current => current.includes(person.name) ? current.filter(name => name !== person.name) : [...current, person.name]); }} aria-label={pinnedPeople.includes(person.name) ? `Unpin ${person.name}` : `Pin ${person.name}`}>{pinnedPeople.includes(person.name) ? "●" : "⌖"}</button><span className="bubble-photo">{person.initials}</span><strong>{person.name}</strong><small>{person.age} · {person.area}</small><span className="presence"><i />{person.online ? "Here now" : "Away"}</span></div>)}
           </div><span className="swipe-hint">Swipe the room to explore farther</span>
           <button className="mobile-invite-action" onClick={() => { setAuthMessage(""); setModal("invite"); }}>＋ <span>Post an invitation</span></button>
@@ -277,8 +335,10 @@ export default function Home() {
           <div className="modal-mark">✓</div><p className="eyebrow">{profileReady ? "ACCOUNT STATUS" : "PRIVATE PROFILE"}</p><h2>{profileReady ? "Your place is saved." : "Make your bubble yours."}</h2>
           {profileReady ? <><div className="account-progress"><span className="done">✓ Email confirmed</span><span className="done">✓ Private profile created</span><span className={verificationStatus === "verified" ? "done" : "current"}>{verificationStatus === "verified" ? "✓" : "3"} Adult verification {verificationStatus}</span><span>4 Membership activation</span></div><p>Your profile remains invisible until adult verification and membership are active. Unverified visitors cannot view it while you wait.</p><button className="primary full" onClick={() => setModal(null)}>Return to Meet Freely <span>→</span></button><button className="signout-button" onClick={signOut}>Sign out</button></> : <><p>Use a username—not your surname or social handle. Only your broad area is shown.</p><input className="auth-input" value={username} onChange={(event) => setUsername(event.target.value.replace(/[^A-Za-z0-9_]/g, "").slice(0, 24))} placeholder="Private username" aria-label="Private username" /><input className="auth-input" value={broadArea} onChange={(event) => setBroadArea(event.target.value.slice(0, 80))} placeholder="Broad area, e.g. West side" aria-label="Broad area" /><label className="field-label">Date of birth<input className="auth-input" type="date" value={birthDate} onChange={(event) => setBirthDate(event.target.value)} /></label><div className="interest-picker">{["Food & coffee","Live music","Outdoors","Books & art","Things to do tonight"].map(item => <button type="button" className={interests.includes(item) ? "selected" : ""} key={item} onClick={() => setInterests(current => current.includes(item) ? current.filter(value => value !== item) : [...current, item])}>{item}</button>)}</div><label className="adult-check"><input type="checkbox" checked={adultConfirmed} onChange={(event) => setAdultConfirmed(event.target.checked)} /> I confirm this birth date is mine and I am at least 18 years old.</label><button className="primary full" onClick={saveProfile} disabled={!adultConfirmed || username.length < 3 || !broadArea || !birthDate || interests.length === 0 || authBusy}>{authBusy ? "Saving…" : "Submit for verification"} <span>→</span></button>{authMessage && <p className="auth-message" role="status">{authMessage}</p>}<small className="modal-foot">Your birth date is private and is never placed on your dating profile.</small></>}
         </> : modal === "profile" ? <>
-          <div className="profile-editor-head"><div className="modal-avatar sky">{username.slice(0, 2).toUpperCase() || "ME"}</div><div><p className="eyebrow">MY PROFILE</p><h2>Make it feel like you.</h2></div></div>
+          <div className="profile-editor-head"><div className="modal-avatar sky">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your profile" /> : username.slice(0, 2).toUpperCase() || "ME"}</div><div><p className="eyebrow">MY PROFILE</p><h2>Make it feel like you.</h2></div></div>
           <p>This is what verified members see after opening your bubble. Keep it warm, specific, and free of surnames or social handles.</p>
+          <span className="field-label">Profile photos · {photos.length}/5</span><div className="photo-grid">{photos.map(photo => <article className={photo.is_primary ? "primary-photo" : ""} key={photo.id}><img src={photo.url} alt={photo.is_primary ? "Primary profile" : "Profile"} /><span>{photo.is_primary ? "Bubble photo" : "Photo"}</span><div>{!photo.is_primary && <button type="button" onClick={() => makePrimaryPhoto(photo.id)} disabled={photoBusy}>Make primary</button>}<button type="button" onClick={() => removePhoto(photo)} disabled={photoBusy}>Remove</button></div></article>)}{photos.length < 5 && <label className="photo-upload"><input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => { void uploadPhoto(event.target.files?.[0]); event.target.value = ""; }} disabled={photoBusy} /><b>{photoBusy ? "…" : "+"}</b><strong>Add photo</strong><small>JPG, PNG or WebP</small></label>}</div>
+          <p className="photo-privacy">Photos are compressed and stripped of location metadata before upload. Only verified members can view them.</p>
           <label className="field-label">Username<input className="auth-input" value={username} onChange={(event) => setUsername(event.target.value.replace(/[^A-Za-z0-9_]/g, "").slice(0, 24))} placeholder="Your username" /></label>
           <label className="field-label">Broad area<input className="auth-input" value={broadArea} onChange={(event) => setBroadArea(event.target.value.slice(0, 80))} placeholder="West side, downtown, within 10 miles…" /></label>
           <label className="field-label">About me<textarea value={bio} onChange={(event) => setBio(event.target.value.slice(0, 500))} placeholder="A few details that make it easy for someone to start a real conversation…" /></label>
