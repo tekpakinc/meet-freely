@@ -5,7 +5,7 @@ import { isSupabaseConfigured, supabase } from "./lib/supabase";
 
 type InstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: "accepted" | "dismissed" }> };
 type ProfilePhoto = { id: string; storage_path: string; is_primary: boolean; position: number; url: string };
-type RoomPerson = { id?: string; name: string; age: number | null; area: string; note: string; tags: string[]; initials: string; photoPosition?: string; photoUrl?: string; tone: string; online: boolean; sample?: boolean };
+type RoomPerson = { id?: string; name: string; age: number | null; area: string; note: string; tags: string[]; initials: string; gender?: string | null; photoPosition?: string; photoUrl?: string; tone: string; online: boolean; sample?: boolean };
 type InvitationItem = { id: string; body: string; broad_area: string | null; created_at: string; expires_at: string; author: RoomPerson; roomName: string };
 type IntroductionItem = { id: string; sender_id: string; recipient_id: string; message: string; state: "pending" | "accepted" | "passed" | "reported"; created_at: string; personName: string; incoming: boolean };
 
@@ -36,6 +36,8 @@ const rooms = [
   { name: "Books & art", icon: "◌", count: 14, color: "#f5b49f" },
 ];
 
+const genderOptions = ["Woman", "Man", "Nonbinary", "Genderfluid", "Agender", "Self-described"];
+
 export default function Home() {
   const [browserReady, setBrowserReady] = useState(false);
   const [verified, setVerified] = useState(false);
@@ -56,6 +58,8 @@ export default function Home() {
   const [interests, setInterests] = useState<string[]>([]);
   const [bio, setBio] = useState("");
   const [intention, setIntention] = useState("");
+  const [gender, setGender] = useState("");
+  const [interestedIn, setInterestedIn] = useState<string[]>([]);
   const [discoverable, setDiscoverable] = useState(false);
   const [verificationStatus, setVerificationStatus] = useState("unverified");
   const [inviteText, setInviteText] = useState("");
@@ -87,6 +91,7 @@ export default function Home() {
   const [filterIntention, setFilterIntention] = useState("");
   const [filterArea, setFilterArea] = useState("");
   const [filterOnlineOnly, setFilterOnlineOnly] = useState(false);
+  const [filterGender, setFilterGender] = useState("");
 
   const loadPhotos = async (userId: string) => {
     if (!supabase) return;
@@ -107,11 +112,11 @@ export default function Home() {
       if (!userId) { setVerified(false); setProfileReady(false); return; }
       const [{ data: account }, { data: profile }, { data: request }] = await Promise.all([
         supabase.from("accounts").select("state, verification, membership_active").eq("user_id", userId).maybeSingle(),
-        supabase.from("profiles").select("username, broad_area, interests, bio, intentions, discoverable").eq("user_id", userId).maybeSingle(),
+        supabase.from("profiles").select("username, broad_area, interests, bio, intentions, gender, interested_in, discoverable").eq("user_id", userId).maybeSingle(),
         supabase.from("verification_requests").select("status").eq("user_id", userId).maybeSingle(),
       ]);
       setProfileReady(Boolean(profile));
-      if (profile) { setUsername(profile.username); setBroadArea(profile.broad_area ?? ""); setInterests(profile.interests ?? []); setBio(profile.bio ?? ""); setIntention(profile.intentions?.[0] ?? ""); setDiscoverable(profile.discoverable ?? false); }
+      if (profile) { setUsername(profile.username); setBroadArea(profile.broad_area ?? ""); setInterests(profile.interests ?? []); setBio(profile.bio ?? ""); setIntention(profile.intentions?.[0] ?? ""); setGender(profile.gender ?? ""); setInterestedIn(profile.interested_in ?? []); setDiscoverable(profile.discoverable ?? false); }
       setVerificationStatus(request?.status ?? account?.verification ?? "unverified");
       setVerified(account?.state === "active" && account.verification === "verified" && account.membership_active === true);
       if (profile) await loadPhotos(userId);
@@ -149,7 +154,7 @@ export default function Home() {
       await supabase.from("room_members").upsert({ room_id: room.id, user_id: userId, state: "active", last_seen_at: new Date().toISOString() }, { onConflict: "room_id,user_id" });
       const { data: members } = await supabase.from("room_members").select("user_id,bubble_color,last_seen_at").eq("room_id", room.id).neq("user_id", userId).order("last_seen_at", { ascending: false }).limit(30);
       const memberIds = (members ?? []).map(member => member.user_id);
-      const { data: profiles } = memberIds.length ? await supabase.from("profiles").select("user_id,username,age,broad_area,bio,intentions,interests").in("user_id", memberIds).eq("discoverable", true) : { data: [] };
+      const { data: profiles } = memberIds.length ? await supabase.from("profiles").select("user_id,username,age,broad_area,bio,intentions,interests,gender").in("user_id", memberIds).eq("discoverable", true) : { data: [] };
       const profileIds = (profiles ?? []).map(profile => profile.user_id);
       const { data: photoRows } = profileIds.length ? await supabase.from("profile_photos").select("user_id,storage_path").in("user_id", profileIds).eq("is_primary", true) : { data: [] };
       const photoUrls = new Map<string,string>();
@@ -158,7 +163,7 @@ export default function Home() {
       const syncPresence = () => { const state = channel?.presenceState<Record<string,string>>() ?? {}; Object.values(state).flat().forEach(entry => { if (entry.user_id) onlineIds.add(entry.user_id); }); };
       channel = supabase.channel(`room:${room.id}`, { config: { presence: { key: userId } } }).on("presence", { event: "sync" }, () => { syncPresence(); setRoomPeople(current => current.map(person => ({ ...person, online: person.id ? onlineIds.has(person.id) : person.online }))); }).subscribe(async status => { if (status === "SUBSCRIBED") await channel?.track({ user_id: userId, room_id: room.id, online_at: new Date().toISOString() }); });
       const memberById = new Map((members ?? []).map(member => [member.user_id, member]));
-      const mapped: RoomPerson[] = (profiles ?? []).map(profile => ({ id: profile.user_id, name: profile.username, age: profile.age, area: profile.broad_area || "Nearby area", note: profile.bio || "Say hello and ask what brought them into this room.", tags: [...(profile.intentions ?? []), ...(profile.interests ?? [])].slice(0,4), initials: profile.username.slice(0,2).toUpperCase(), photoUrl: photoUrls.get(profile.user_id), tone: memberById.get(profile.user_id)?.bubble_color ?? "mint", online: onlineIds.has(profile.user_id), sample: false }));
+      const mapped: RoomPerson[] = (profiles ?? []).map(profile => ({ id: profile.user_id, name: profile.username, age: profile.age, area: profile.broad_area || "Nearby area", note: profile.bio || "Say hello and ask what brought them into this room.", tags: [...(profile.intentions ?? []), ...(profile.interests ?? [])].slice(0,4), initials: profile.username.slice(0,2).toUpperCase(), gender:profile.gender, photoUrl: photoUrls.get(profile.user_id), tone: memberById.get(profile.user_id)?.bubble_color ?? "mint", online: onlineIds.has(profile.user_id), sample: false }));
       if (active) { setRoomPeople(mapped); setRoomMemberCount((members?.length ?? 0) + 1); setRoomLoading(false); }
     };
     void loadRoom();
@@ -174,9 +179,9 @@ export default function Home() {
         supabase.from("introductions").select("id,sender_id,recipient_id,message,state,created_at").order("created_at", { ascending: false }).limit(40),
       ]);
       const personIds = Array.from(new Set([...(invitationRows ?? []).map(row => row.author_id), ...(introRows ?? []).flatMap(row => [row.sender_id,row.recipient_id])])).filter(id => id !== userId);
-      const { data: profiles } = personIds.length ? await supabase.from("profiles").select("user_id,username,age,broad_area,bio,intentions,interests").in("user_id", personIds) : { data: [] };
+      const { data: profiles } = personIds.length ? await supabase.from("profiles").select("user_id,username,age,broad_area,bio,intentions,interests,gender").in("user_id", personIds) : { data: [] };
       const profileById = new Map((profiles ?? []).map(profile => [profile.user_id, profile]));
-      const toPerson = (id: string): RoomPerson => { const profile = profileById.get(id); return { id, name: profile?.username ?? "Meet Freely member", age: profile?.age ?? null, area: profile?.broad_area ?? "Broad area private", note: profile?.bio ?? "Open their profile to learn more.", tags: [...(profile?.intentions ?? []), ...(profile?.interests ?? [])].slice(0,4), initials: profile?.username?.slice(0,2).toUpperCase() ?? "MF", tone: "rose", online: roomPeople.some(person => person.id === id && person.online), sample: false }; };
+      const toPerson = (id: string): RoomPerson => { const profile = profileById.get(id); return { id, name: profile?.username ?? "Meet Freely member", age: profile?.age ?? null, area: profile?.broad_area ?? "Broad area private", note: profile?.bio ?? "Open their profile to learn more.", tags: [...(profile?.intentions ?? []), ...(profile?.interests ?? [])].slice(0,4), initials: profile?.username?.slice(0,2).toUpperCase() ?? "MF", gender:profile?.gender, tone: "rose", online: roomPeople.some(person => person.id === id && person.online), sample: false }; };
       if (!active) return;
       setInvitations((invitationRows ?? []).map(row => ({ id: row.id, body: row.body, broad_area: row.broad_area, created_at: row.created_at, expires_at: row.expires_at, author: row.author_id === userId ? { id:userId,name:username,age:null,area:broadArea,note:bio,tags:interests,initials:username.slice(0,2).toUpperCase(),tone:"sky",online:true } : toPerson(row.author_id), roomName: Array.isArray(row.rooms) ? row.rooms[0]?.name ?? "Interest room" : (row.rooms as {name?:string}|null)?.name ?? "Interest room" })));
       setIntroductions((introRows ?? []).map(row => { const incoming = row.recipient_id === userId; const otherId = incoming ? row.sender_id : row.recipient_id; return { ...row, incoming, personName: profileById.get(otherId)?.username ?? "Meet Freely member" }; }));
@@ -226,7 +231,7 @@ export default function Home() {
     const { data: sessionData } = await supabase.auth.getSession();
     const userId = sessionData.session?.user.id;
     if (!userId) { setAuthBusy(false); return setAuthMessage("Please sign in again."); }
-    const { error } = await supabase.from("profiles").update({ username, broad_area: broadArea, bio: bio.trim() || null, intentions: intention ? [intention] : [], interests, discoverable }).eq("user_id", userId);
+    const { error } = await supabase.from("profiles").update({ username, broad_area: broadArea, bio: bio.trim() || null, intentions: intention ? [intention] : [], interests, gender:gender || null, interested_in:interestedIn, discoverable }).eq("user_id", userId);
     setAuthBusy(false);
     setAuthMessage(error ? error.message : "Profile saved. Your bubble is up to date.");
   };
@@ -318,10 +323,11 @@ export default function Home() {
     if (person.age !== null && (person.age < filterMinAge || person.age > filterMaxAge)) return false;
     if (filterOnlineOnly && !person.online) return false;
     if (filterIntention && !person.tags.some(tag => tag.toLowerCase().includes(filterIntention.toLowerCase()))) return false;
+    if (filterGender && person.gender !== filterGender) return false;
     if (filterArea && !person.area.toLowerCase().includes(filterArea.toLowerCase())) return false;
     return true;
   });
-  const activeFilterCount = Number(filterMinAge > 18 || filterMaxAge < 99) + Number(Boolean(filterIntention)) + Number(Boolean(filterArea)) + Number(filterOnlineOnly);
+  const activeFilterCount = Number(filterMinAge > 18 || filterMaxAge < 99) + Number(Boolean(filterIntention)) + Number(Boolean(filterGender)) + Number(Boolean(filterArea)) + Number(filterOnlineOnly);
   const visibleRoomCount = roomMemberCount || activeRoomDetails.count;
   const openMyProfile = () => { setAuthMessage(""); setModal("profile"); };
 
@@ -444,9 +450,10 @@ export default function Home() {
           <div className="modal-mark">☷</div><p className="eyebrow">ROOM FILTERS</p><h2>Who would you like to meet?</h2><p>These choices only narrow your view. They never change your visibility or reveal anyone’s precise location.</p>
           <div className="age-filter"><label className="field-label">Minimum age<input className="auth-input" type="number" min="18" max="99" value={filterMinAge} onChange={(event) => setFilterMinAge(Math.max(18,Math.min(filterMaxAge,Number(event.target.value) || 18)))} /></label><label className="field-label">Maximum age<input className="auth-input" type="number" min="18" max="99" value={filterMaxAge} onChange={(event) => setFilterMaxAge(Math.min(99,Math.max(filterMinAge,Number(event.target.value) || 99)))} /></label></div>
           <label className="field-label">What they’re open to<select className="auth-input" value={filterIntention} onChange={(event) => setFilterIntention(event.target.value)}><option value="">Anything</option><option>Dating</option><option>Long-term relationship</option><option>Friends first</option><option>Open to possibilities</option></select></label>
+          <label className="field-label">Gender<select className="auth-input" value={filterGender} onChange={(event) => setFilterGender(event.target.value)}><option value="">Any gender</option>{genderOptions.map(option => <option key={option}>{option}</option>)}</select></label>
           <label className="field-label">Broad area contains<input className="auth-input" value={filterArea} onChange={(event) => setFilterArea(event.target.value.slice(0,40))} placeholder="Downtown, west side…" /></label>
           <label className="adult-check visibility-check"><input type="checkbox" checked={filterOnlineOnly} onChange={(event) => setFilterOnlineOnly(event.target.checked)} /><span><strong>Here now only</strong><small>Hide bubbles belonging to members who are currently away.</small></span></label>
-          <div className="filter-summary"><strong>{visiblePeople.length}</strong><span>people fit these filters in the current room</span></div><button className="primary full" onClick={() => setModal(null)}>Show these people <span>→</span></button><button className="signout-button" onClick={() => { setFilterMinAge(18); setFilterMaxAge(99); setFilterIntention(""); setFilterArea(""); setFilterOnlineOnly(false); }}>Clear all filters</button>
+          <div className="filter-summary"><strong>{visiblePeople.length}</strong><span>people fit these filters in the current room</span></div><button className="primary full" onClick={() => setModal(null)}>Show these people <span>→</span></button><button className="signout-button" onClick={() => { setFilterMinAge(18); setFilterMaxAge(99); setFilterIntention(""); setFilterGender(""); setFilterArea(""); setFilterOnlineOnly(false); }}>Clear all filters</button>
         </> : modal === "profile" ? <>
           <div className="profile-editor-head"><div className="modal-avatar sky">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your profile" /> : username.slice(0, 2).toUpperCase() || "ME"}</div><div><p className="eyebrow">MY PROFILE</p><h2>Make it feel like you.</h2></div></div>
           <p>This is what verified members see after opening your bubble. Keep it warm, specific, and free of surnames or social handles.</p>
@@ -457,6 +464,8 @@ export default function Home() {
           <label className="field-label">About me<textarea value={bio} onChange={(event) => setBio(event.target.value.slice(0, 500))} placeholder="A few details that make it easy for someone to start a real conversation…" /></label>
           <p className="character-note">{bio.length}/500 · Don’t include your surname, workplace, phone number, or social handle.</p>
           <label className="field-label">What I’m open to<select className="auth-input" value={intention} onChange={(event) => setIntention(event.target.value)}><option value="">Still figuring it out</option><option>Dating</option><option>Long-term relationship</option><option>Friends first</option><option>Open to possibilities</option></select></label>
+          <label className="field-label">My gender<select className="auth-input" value={gender} onChange={(event) => setGender(event.target.value)}><option value="">Prefer not to say</option>{genderOptions.map(option => <option key={option}>{option}</option>)}</select></label>
+          <span className="field-label">Genders I’m open to meeting</span><div className="interest-picker">{genderOptions.map(option => <button type="button" className={interestedIn.includes(option) ? "selected" : ""} key={option} onClick={() => setInterestedIn(current => current.includes(option) ? current.filter(value => value !== option) : [...current,option])}>{option}</button>)}</div>
           <span className="field-label">My interests</span><div className="interest-picker">{["Food & coffee","Live music","Outdoors","Books & art","Things to do tonight"].map(item => <button type="button" className={interests.includes(item) ? "selected" : ""} key={item} onClick={() => setInterests(current => current.includes(item) ? current.filter(value => value !== item) : [...current, item])}>{item}</button>)}</div>
           <label className="adult-check visibility-check"><input type="checkbox" checked={discoverable} onChange={(event) => setDiscoverable(event.target.checked)} /><span><strong>Show my bubble in rooms</strong><small>Only verified members can open it. Turn this off anytime to step out of view.</small></span></label>
           <button className="primary full" onClick={updateProfile} disabled={username.length < 3 || !broadArea || interests.length === 0 || authBusy}>{authBusy ? "Saving…" : "Save my profile"} <span>→</span></button>
@@ -471,7 +480,7 @@ export default function Home() {
           <button className="primary full" onClick={postInvitation} disabled={inviteText.trim().length < 5 || authBusy}>{authBusy ? "Posting…" : "Post for 24 hours"} <span>→</span></button>
           {authMessage && <p className="auth-message" role="status">{authMessage}</p>}
         </> : <>
-          <div className="member-profile-head"><div className={`modal-avatar ${selected?.sample ? "sample-photo" : ""} ${selected?.tone}`} style={selected?.photoUrl ? undefined : {backgroundPosition:selected?.photoPosition}}>{selected?.photoUrl ? <img src={selected.photoUrl} alt={`${selected.name} profile`} /> : selected?.sample ? "" : selected?.initials}</div><div><p className="eyebrow">MEMBER PROFILE{selected?.sample ? " · SAMPLE" : ""}</p><h2>{selected?.name}</h2><p>{selected?.age ? `${selected.age} · ` : ""}{selected?.area} · <span className={selected?.online ? "profile-online" : "profile-away"}>{selected?.online ? "Here now" : "Away"}</span></p></div></div>
+          <div className="member-profile-head"><div className={`modal-avatar ${selected?.sample ? "sample-photo" : ""} ${selected?.tone}`} style={selected?.photoUrl ? undefined : {backgroundPosition:selected?.photoPosition}}>{selected?.photoUrl ? <img src={selected.photoUrl} alt={`${selected.name} profile`} /> : selected?.sample ? "" : selected?.initials}</div><div><p className="eyebrow">MEMBER PROFILE{selected?.sample ? " · SAMPLE" : ""}</p><h2>{selected?.name}</h2><p>{selected?.age ? `${selected.age} · ` : ""}{selected?.gender ? `${selected.gender} · ` : ""}{selected?.area} · <span className={selected?.online ? "profile-online" : "profile-away"}>{selected?.online ? "Here now" : "Away"}</span></p></div></div>
           <p className="profile-bio">{selected?.note}</p><div className="profile-tags">{selected?.tags.map(tag => <span key={tag}>{tag}</span>)}</div>
           {sent ? <div className="sent-note"><strong>Hello sent.</strong><p>Your introduction is waiting in their inbox. They can accept, politely pass, or report it—no awkward matching game.</p></div> : <><p className="profile-prompt">Feel a spark? Start with something from their profile.</p><textarea value={introductionText} onChange={(event) => setIntroductionText(event.target.value.slice(0,500))} aria-label="Introduction message"/><p className="character-note">{introductionText.length}/500 · Thoughtful introductions get thoughtful replies.</p><button className="primary full" onClick={sendIntroduction} disabled={!introductionText.trim() || authBusy}>{authBusy ? "Sending…" : "Send introduction"} <span>→</span></button>{authMessage && <p className="auth-message" role="status">{authMessage}</p>}</>}
         </>}
