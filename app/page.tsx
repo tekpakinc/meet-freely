@@ -6,6 +6,8 @@ import { isSupabaseConfigured, supabase } from "./lib/supabase";
 type InstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: "accepted" | "dismissed" }> };
 type ProfilePhoto = { id: string; storage_path: string; is_primary: boolean; position: number; url: string };
 type RoomPerson = { id?: string; name: string; age: number | null; area: string; note: string; tags: string[]; initials: string; photoPosition?: string; photoUrl?: string; tone: string; online: boolean; sample?: boolean };
+type InvitationItem = { id: string; body: string; broad_area: string | null; created_at: string; expires_at: string; author: RoomPerson; roomName: string };
+type IntroductionItem = { id: string; sender_id: string; recipient_id: string; message: string; state: "pending" | "accepted" | "passed" | "reported"; created_at: string; personName: string; incoming: boolean };
 
 async function prepareProfilePhoto(file: File) {
   const image = await createImageBitmap(file);
@@ -77,6 +79,9 @@ export default function Home() {
   const [roomPeople, setRoomPeople] = useState<RoomPerson[]>([]);
   const [roomMemberCount, setRoomMemberCount] = useState(0);
   const [roomLoading, setRoomLoading] = useState(false);
+  const [invitations, setInvitations] = useState<InvitationItem[]>([]);
+  const [introductions, setIntroductions] = useState<IntroductionItem[]>([]);
+  const [activityVersion, setActivityVersion] = useState(0);
 
   const loadPhotos = async (userId: string) => {
     if (!supabase) return;
@@ -108,6 +113,8 @@ export default function Home() {
       setModal(profile ? null : "onboarding");
     };
     supabase.auth.getSession().then(({ data }) => void refreshAccess(data.session?.user.id));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => { window.setTimeout(() => void refreshAccess(session?.user.id), 0); });
+    return () => listener.subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -152,6 +159,26 @@ export default function Home() {
     void loadRoom();
     return () => { active = false; if (channel) void supabase.removeChannel(channel); };
   }, [activeRoom, verified, userId]);
+
+  useEffect(() => {
+    if (!supabase || !verified || !userId) { setInvitations([]); setIntroductions([]); return; }
+    let active = true;
+    const loadActivity = async () => {
+      const [{ data: invitationRows }, { data: introRows }] = await Promise.all([
+        supabase.from("open_invitations").select("id,author_id,body,broad_area,created_at,expires_at,rooms(name)").eq("state", "open").gt("expires_at", new Date().toISOString()).order("created_at", { ascending: false }).limit(20),
+        supabase.from("introductions").select("id,sender_id,recipient_id,message,state,created_at").order("created_at", { ascending: false }).limit(40),
+      ]);
+      const personIds = Array.from(new Set([...(invitationRows ?? []).map(row => row.author_id), ...(introRows ?? []).flatMap(row => [row.sender_id,row.recipient_id])])).filter(id => id !== userId);
+      const { data: profiles } = personIds.length ? await supabase.from("profiles").select("user_id,username,age,broad_area,bio,intentions,interests").in("user_id", personIds) : { data: [] };
+      const profileById = new Map((profiles ?? []).map(profile => [profile.user_id, profile]));
+      const toPerson = (id: string): RoomPerson => { const profile = profileById.get(id); return { id, name: profile?.username ?? "Meet Freely member", age: profile?.age ?? null, area: profile?.broad_area ?? "Broad area private", note: profile?.bio ?? "Open their profile to learn more.", tags: [...(profile?.intentions ?? []), ...(profile?.interests ?? [])].slice(0,4), initials: profile?.username?.slice(0,2).toUpperCase() ?? "MF", tone: "rose", online: roomPeople.some(person => person.id === id && person.online), sample: false }; };
+      if (!active) return;
+      setInvitations((invitationRows ?? []).map(row => ({ id: row.id, body: row.body, broad_area: row.broad_area, created_at: row.created_at, expires_at: row.expires_at, author: row.author_id === userId ? { id:userId,name:username,age:null,area:broadArea,note:bio,tags:interests,initials:username.slice(0,2).toUpperCase(),tone:"sky",online:true } : toPerson(row.author_id), roomName: Array.isArray(row.rooms) ? row.rooms[0]?.name ?? "Interest room" : (row.rooms as {name?:string}|null)?.name ?? "Interest room" })));
+      setIntroductions((introRows ?? []).map(row => { const incoming = row.recipient_id === userId; const otherId = incoming ? row.sender_id : row.recipient_id; return { ...row, incoming, personName: profileById.get(otherId)?.username ?? "Meet Freely member" }; }));
+    };
+    void loadActivity();
+    return () => { active = false; };
+  }, [verified, userId, activityVersion, roomPeople, username, broadArea, bio, interests]);
 
   const enter = () => setModal("verify");
   const submitAuth = async () => {
@@ -209,10 +236,12 @@ export default function Home() {
     const { error } = userId && room ? await supabase.from("open_invitations").insert({ author_id: userId, room_id: room.id, body: inviteText.trim(), broad_area: broadArea || null }) : { error: roomError ?? new Error("Please sign in again.") };
     setAuthBusy(false);
     if (error) return setAuthMessage(error.message);
-    setInviteText(""); setAuthMessage("Your invitation is live for 24 hours.");
+    setInviteText(""); setAuthMessage("Your invitation is live for 24 hours."); setActivityVersion(value => value + 1);
   };
-  const hideDraggedPerson = () => {
+  const hideDraggedPerson = async () => {
     if (!draggingPerson) return;
+    const person = visiblePeople.find(item => item.name === draggingPerson);
+    if (supabase && userId && person?.id) await supabase.from("blocks").upsert({ blocker_id:userId, blocked_id:person.id });
     setHiddenPeople(current => [...current, draggingPerson]);
     setDraggingPerson(null);
   };
@@ -224,7 +253,17 @@ export default function Home() {
     const { error } = await supabase.from("introductions").insert({ sender_id: userId, recipient_id: selected.id, message: introductionText.trim() });
     setAuthBusy(false);
     if (error) return setAuthMessage(error.message);
-    setSent(true);
+    setSent(true); setActivityVersion(value => value + 1);
+  };
+  const respondToIntroduction = async (id: string, state: "accepted" | "passed" | "reported") => {
+    if (!supabase) return;
+    setAuthBusy(true); setAuthMessage("");
+    const item = introductions.find(introduction => introduction.id === id);
+    const { error } = await supabase.from("introductions").update({ state, updated_at:new Date().toISOString() }).eq("id", id);
+    if (!error && state === "reported" && item?.incoming && userId) await supabase.from("reports").insert({ reporter_id:userId, reported_id:item.sender_id, reason:"Reported an introduction from the member inbox." });
+    setAuthBusy(false);
+    if (error) return setAuthMessage(error.message);
+    setIntroductions(current => current.map(item => item.id === id ? { ...item, state } : item));
   };
   const installApp = async () => {
     if (installPrompt) { await installPrompt.prompt(); await installPrompt.userChoice; setInstallPrompt(null); return; }
@@ -323,14 +362,7 @@ export default function Home() {
         <div className="section-heading"><div><p className="eyebrow">OPEN INVITATIONS</p><h2>See who wants to do something.</h2></div><p className="section-note">Short, timely posts from people who are online now. They disappear automatically, so the list always feels alive.</p></div>
         <div className="invite-layout">
           <div className="invite-feed">
-            <article className="invite-card" onClick={() => verified ? hello(people[0]) : enter()}>
-              <div className={`invite-avatar coral ${verified ? "sample-photo" : ""}`} style={verified ? {backgroundPosition:people[0].photoPosition} : undefined}>{verified ? "" : "•"}<i /></div>
-              <div><div className="invite-meta"><strong>{verified ? "CityFern" : "Verified member"}</strong><span>Tonight</span></div><p>{verified ? "I’m off this evening—anyone want to walk around the fair?" : "Verify your account to read this open invitation."}</p><small>Things to do tonight · West side</small></div><button>Message <span>→</span></button>
-            </article>
-            <article className="invite-card" onClick={() => verified ? hello(people[2]) : enter()}>
-              <div className={`invite-avatar gold ${verified ? "sample-photo" : ""}`} style={verified ? {backgroundPosition:people[2].photoPosition} : undefined}>{verified ? "" : "•"}<i /></div>
-              <div><div className="invite-meta"><strong>{verified ? "SundayStatic" : "Verified member"}</strong><span>Tonight</span></div><p>{verified ? "There’s a tiny jazz show at 8. I’d love some company." : "Verify your account to read this open invitation."}</p><small>Live music · Center city</small></div><button>Message <span>→</span></button>
-            </article>
+            {verified && invitations.length ? invitations.slice(0,4).map(invitation => <article className="invite-card" key={invitation.id} onClick={() => invitation.author.id === userId ? openMyProfile() : hello(invitation.author)}><div className={`invite-avatar ${invitation.author.tone}`}>{invitation.author.initials}<i /></div><div><div className="invite-meta"><strong>{invitation.author.name}{invitation.author.id === userId ? " · You" : ""}</strong><span>{new Date(invitation.created_at).toLocaleDateString([], { month:"short", day:"numeric" })}</span></div><p>{invitation.body}</p><small>{invitation.roomName} · {invitation.broad_area || invitation.author.area}</small></div><button>{invitation.author.id === userId ? "Profile" : "Message"} <span>→</span></button></article>) : <article className="invite-card" onClick={verified ? () => setModal("invite") : enter}><div className="invite-avatar rose">MF<i /></div><div><div className="invite-meta"><strong>{verified ? "The room is open" : "Verified member"}</strong><span>Now</span></div><p>{verified ? "No live invitations yet. Be the first to suggest something." : "Verify your account to read open invitations."}</p><small>Precise locations are never shown</small></div><button>{verified ? "Post" : "Join"} <span>→</span></button></article>}
             <button className="post-invite" onClick={verified ? () => { setAuthMessage(""); setModal("invite"); } : enter}><span>＋</span><div><strong>Post an open invitation</strong><small>Tell the room what you feel like doing.</small></div></button>
           </div>
           <aside className="interest-rooms"><p className="eyebrow">BROWSE ROOMS</p>{rooms.map(room => <button className={activeRoom === room.name ? "selected-room" : ""} aria-current={activeRoom === room.name ? "page" : undefined} key={room.name} onClick={() => { setActiveRoom(room.name); setRoomOffset({x:0,y:0}); document.getElementById("room")?.scrollIntoView({behavior:"smooth"}); }}><span className={`room-icon ${room.name === "Live music" ? "plum" : room.name === "Food & coffee" ? "gold" : room.name === "Outdoors" ? "mint" : "coral"}`}>{room.icon}</span><div><strong>{room.name}</strong><small>{room.count} here recently</small></div><b>{activeRoom === room.name ? "✓" : "→"}</b></button>)}</aside>
@@ -409,7 +441,7 @@ export default function Home() {
           <button className="primary full" onClick={updateProfile} disabled={username.length < 3 || !broadArea || interests.length === 0 || authBusy}>{authBusy ? "Saving…" : "Save my profile"} <span>→</span></button>
           {authMessage && <p className="auth-message" role="status">{authMessage}</p>}<button className="signout-button" onClick={signOut}>Sign out</button>
         </> : modal === "messages" ? <>
-          <div className="modal-mark">↗</div><p className="eyebrow">INTRODUCTIONS</p><h2>Your conversations start here.</h2><div className="empty-messages"><div>✦</div><strong>No messages yet</strong><p>When someone replies to an introduction—or sends one to you—it will appear here without a matching game.</p></div><button className="primary full" onClick={() => { setModal(null); document.getElementById("room")?.scrollIntoView(); }}>Return to the room <span>→</span></button>
+          <div className="modal-mark">↗</div><p className="eyebrow">INTRODUCTIONS</p><h2>Your conversations start here.</h2>{introductions.length ? <div className="introduction-inbox">{introductions.map(item => <article key={item.id}><div className="introduction-head"><strong>{item.incoming ? "From" : "To"} {item.personName}</strong><span className={`intro-state ${item.state}`}>{item.state}</span></div><p>{item.message}</p><small>{new Date(item.created_at).toLocaleString([], { month:"short", day:"numeric", hour:"numeric", minute:"2-digit" })}</small>{item.incoming && item.state === "pending" && <div className="introduction-actions"><button onClick={() => respondToIntroduction(item.id,"accepted")} disabled={authBusy}>Accept</button><button onClick={() => respondToIntroduction(item.id,"passed")} disabled={authBusy}>Pass</button><button onClick={() => respondToIntroduction(item.id,"reported")} disabled={authBusy}>Report</button></div>}</article>)}</div> : <div className="empty-messages"><div>✦</div><strong>No introductions yet</strong><p>Open a member’s bubble and send a thoughtful hello. Replies and incoming introductions will appear here.</p></div>}{authMessage && <p className="auth-message" role="status">{authMessage}</p>}<button className="primary full" onClick={() => { setModal(null); document.getElementById("room")?.scrollIntoView(); }}>Return to the room <span>→</span></button>
         </> : modal === "invite" ? <>
           <div className="modal-mark">＋</div><p className="eyebrow">OPEN INVITATION</p><h2>What sounds good?</h2><p>Post a short plan for people who are online now. It automatically disappears after 24 hours.</p>
           <label className="field-label">Interest room<select className="auth-input" value={inviteRoom} onChange={(event) => setInviteRoom(event.target.value)}>{rooms.map(room => <option key={room.name}>{room.name}</option>)}</select></label>
