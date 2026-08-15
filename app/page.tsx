@@ -17,12 +17,12 @@ async function prepareProfilePhoto(file: File) {
 }
 
 const people = [
-  { name: "CityFern", age: 31, area: "West side", note: "Museum afternoons, tiny restaurants, and laughing too loudly.", tags: ["Long-term", "Art", "Food"], initials: "CF", tone: "coral", online: true },
-  { name: "MilesAhead", age: 34, area: "North side", note: "Weekend cyclist. Weeknight cook. Looking for something steady.", tags: ["Long-term", "Outdoors", "Cooking"], initials: "MA", tone: "sky", online: true },
-  { name: "SundayStatic", age: 29, area: "Center city", note: "Live music, used bookstores, and a very opinionated rescue dog.", tags: ["Dating", "Music", "Dogs"], initials: "SS", tone: "gold", online: true },
-  { name: "SoftLaunch", age: 36, area: "East side", note: "Architect, amateur potter, professional finder of good coffee.", tags: ["Relationship", "Design", "Coffee"], initials: "SL", tone: "plum", online: true },
-  { name: "JuniperJune", age: 32, area: "South side", note: "Equal parts homebody and last-minute road trip.", tags: ["Dating", "Travel", "Books"], initials: "JJ", tone: "mint", online: false },
-  { name: "HeyItsRae", age: 30, area: "Within 10 miles", note: "Sunday brunch host. Terrible at trivia. Excellent teammate.", tags: ["Long-term", "Friends first", "Brunch"], initials: "HR", tone: "rose", online: false },
+  { name: "CityFern", age: 31, area: "West side", note: "Museum afternoons, tiny restaurants, and laughing too loudly.", tags: ["Long-term", "Art", "Food"], initials: "CF", photoPosition: "0% 0%", tone: "coral", online: true },
+  { name: "MilesAhead", age: 34, area: "North side", note: "Weekend cyclist. Weeknight cook. Looking for something steady.", tags: ["Long-term", "Outdoors", "Cooking"], initials: "MA", photoPosition: "50% 0%", tone: "sky", online: true },
+  { name: "SundayStatic", age: 29, area: "Center city", note: "Live music, used bookstores, and a very opinionated rescue dog.", tags: ["Dating", "Music", "Dogs"], initials: "SS", photoPosition: "100% 0%", tone: "gold", online: true },
+  { name: "SoftLaunch", age: 36, area: "East side", note: "Architect, amateur potter, professional finder of good coffee.", tags: ["Relationship", "Design", "Coffee"], initials: "SL", photoPosition: "0% 100%", tone: "plum", online: true },
+  { name: "JuniperJune", age: 32, area: "South side", note: "Equal parts homebody and last-minute road trip.", tags: ["Dating", "Travel", "Books"], initials: "JJ", photoPosition: "50% 100%", tone: "mint", online: false },
+  { name: "HeyItsRae", age: 30, area: "Within 10 miles", note: "Sunday brunch host. Terrible at trivia. Excellent teammate.", tags: ["Long-term", "Friends first", "Brunch"], initials: "HR", photoPosition: "100% 100%", tone: "rose", online: false },
 ];
 
 const rooms = [
@@ -225,7 +225,7 @@ export default function Home() {
         <div className="mobile-room" onPointerDown={beginRoomSwipe} onPointerMove={moveRoom} onPointerUp={endRoomSwipe} onPointerCancel={endRoomSwipe}>
           <div className="mobile-bubble-field" style={{ transform: `translate(${roomOffset.x}px, ${roomOffset.y}px)` }}>
           <button className="mobile-own-bubble" onClick={() => setModal("profile")}><span className="bubble-photo">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your primary profile" /> : username.slice(0, 2).toUpperCase() || "ME"}</span><strong>{username || "Your bubble"}</strong><small>You · tap to edit</small><span className="presence"><i />Here now</span></button>
-          {people.filter(person => !hiddenPeople.includes(person.name)).map((person, index) => <div role="button" tabIndex={0} key={person.name} className={`mobile-member-bubble mobile-bubble-${index + 1} ${person.tone} ${person.online ? "is-online" : "is-offline"} ${pinnedPeople.includes(person.name) ? "is-pinned" : ""}`} onClick={() => { if (!swipeMoved.current) hello(person); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") hello(person); }}><button className="bubble-pin" onClick={(event) => { event.stopPropagation(); setPinnedPeople(current => current.includes(person.name) ? current.filter(name => name !== person.name) : [...current, person.name]); }} aria-label={pinnedPeople.includes(person.name) ? `Unpin ${person.name}` : `Pin ${person.name}`}>{pinnedPeople.includes(person.name) ? "●" : "⌖"}</button><span className="bubble-photo">{person.initials}</span><strong>{person.name}</strong><small>{person.age} · {person.area}</small><span className="presence"><i />{person.online ? "Here now" : "Away"}</span></div>)}
+          {people.filter(person => !hiddenPeople.includes(person.name)).map((person, index) => <div role="button" tabIndex={0} key={person.name} className={`mobile-member-bubble mobile-bubble-${index + 1} ${person.tone} ${person.online ? "is-online" : "is-offline"} ${pinnedPeople.includes(person.name) ? "is-pinned" : ""}`} onClick={() => { if (!swipeMoved.current) hello(person); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") hello(person); }}><button className="bubble-pin" onClick={(event) => { event.stopPropagation(); setPinnedPeople(current => current.includes(person.name) ? current.filter(name => name !== person.name) : [...current, person.name]); }} aria-label={pinnedPeople.includes(person.name) ? `Unpin ${person.name}` : `Pin ${person.name}`}>{pinnedPeople.includes(person.name) ? "●" : "⌖"}</button><span className="bubble-photo sample-photo" style={{backgroundPosition:person.photoPosition}} /><strong>{person.name}</strong><small>{person.age} · {person.area}</small><span className="presence"><i />{person.online ? "Here now" : "Away"}</span></div>)}
           </div><span className="swipe-hint">Swipe the room to explore farther</span>
           <button className="mobile-invite-action" onClick={() => { setAuthMessage(""); setModal("invite"); }}>＋ <span>Post an invitation</span></button>
         </div>
@@ -252,7 +252,7 @@ export default function Home() {
         <div className="room-window" aria-label={verified ? "Member room preview" : "Protected visitor preview"}>
           <div className="window-top"><span>THE LOCAL ROOM</span><span className="active"><i /> 86 here recently</span></div>
           <div className={`preview-bubbles ${verified ? "revealed" : "protected"}`}>
-            {people.slice(0, 4).map((person, index) => <div className={`member-bubble preview-bubble bubble-${index + 1} ${person.tone}`} key={person.name}><div className="bubble-photo">{verified ? person.initials : "•"}</div><strong>{verified ? person.name : "Someone’s here"}</strong><small>{verified ? `${person.age} · ${person.area}` : "Identity protected"}</small></div>)}
+            {people.slice(0, 4).map((person, index) => <div className={`member-bubble preview-bubble bubble-${index + 1} ${person.tone}`} key={person.name}><div className={`bubble-photo ${verified ? "sample-photo" : ""}`} style={verified ? {backgroundPosition:person.photoPosition} : undefined}>{verified ? "" : "•"}</div><strong>{verified ? person.name : "Someone’s here"}</strong><small>{verified ? `${person.age} · ${person.area}` : "Identity protected"}</small></div>)}
           </div>
           {!verified && <div className="privacy-shield"><div className="lock">⌁</div><strong>People, not a public catalog.</strong><span>Verify to see who’s inside.</span><button onClick={enter}>Enter securely</button></div>}
         </div>
@@ -265,11 +265,11 @@ export default function Home() {
         <div className="invite-layout">
           <div className="invite-feed">
             <article className="invite-card" onClick={() => verified ? hello(people[0]) : enter()}>
-              <div className="invite-avatar coral">{verified ? "CF" : "•"}<i /></div>
+              <div className={`invite-avatar coral ${verified ? "sample-photo" : ""}`} style={verified ? {backgroundPosition:people[0].photoPosition} : undefined}>{verified ? "" : "•"}<i /></div>
               <div><div className="invite-meta"><strong>{verified ? "CityFern" : "Verified member"}</strong><span>Tonight</span></div><p>{verified ? "I’m off this evening—anyone want to walk around the fair?" : "Verify your account to read this open invitation."}</p><small>Things to do tonight · West side</small></div><button>Message <span>→</span></button>
             </article>
             <article className="invite-card" onClick={() => verified ? hello(people[2]) : enter()}>
-              <div className="invite-avatar gold">{verified ? "SS" : "•"}<i /></div>
+              <div className={`invite-avatar gold ${verified ? "sample-photo" : ""}`} style={verified ? {backgroundPosition:people[2].photoPosition} : undefined}>{verified ? "" : "•"}<i /></div>
               <div><div className="invite-meta"><strong>{verified ? "SundayStatic" : "Verified member"}</strong><span>Tonight</span></div><p>{verified ? "There’s a tiny jazz show at 8. I’d love some company." : "Verify your account to read this open invitation."}</p><small>Live music · Center city</small></div><button>Message <span>→</span></button>
             </article>
             <button className="post-invite" onClick={verified ? () => { setAuthMessage(""); setModal("invite"); } : enter}><span>＋</span><div><strong>Post an open invitation</strong><small>Tell the room what you feel like doing.</small></div></button>
@@ -284,7 +284,7 @@ export default function Home() {
           {people.filter(person => !hiddenPeople.includes(person.name)).map((person, index) => (
             <button draggable className={`member-bubble room-bubble bubble-${index + 1} ${person.tone} ${person.online ? "is-online" : "is-offline"}`} key={person.name} onDragStart={() => setDraggingPerson(person.name)} onDragEnd={() => setDraggingPerson(null)} onClick={() => verified ? hello(person) : enter()} aria-label={verified ? `Open ${person.name} profile` : "Verify to meet people in this room"}>
               <span className="bubble-shine" />
-              <span className="bubble-photo">{verified ? person.initials : "•"}</span>
+              <span className={`bubble-photo ${verified ? "sample-photo" : ""}`} style={verified ? {backgroundPosition:person.photoPosition} : undefined}>{verified ? "" : "•"}</span>
               <strong>{verified ? person.name : "Verified person"}</strong>
               <small>{verified ? `${person.age} · ${person.area}` : "Identity protected"}</small>
               <span className="presence"><i />{person.online ? "Here now" : "Away"}</span>
@@ -356,7 +356,7 @@ export default function Home() {
           <button className="primary full" onClick={postInvitation} disabled={inviteText.trim().length < 5 || authBusy}>{authBusy ? "Posting…" : "Post for 24 hours"} <span>→</span></button>
           {authMessage && <p className="auth-message" role="status">{authMessage}</p>}
         </> : <>
-          <div className="member-profile-head"><div className={`modal-avatar ${selected?.tone}`}>{selected?.initials}</div><div><p className="eyebrow">MEMBER PROFILE</p><h2>{selected?.name}</h2><p>{selected?.age} · {selected?.area} · <span className={selected?.online ? "profile-online" : "profile-away"}>{selected?.online ? "Here now" : "Away"}</span></p></div></div>
+          <div className="member-profile-head"><div className={`modal-avatar sample-photo ${selected?.tone}`} style={{backgroundPosition:selected?.photoPosition}} /><div><p className="eyebrow">MEMBER PROFILE · SAMPLE</p><h2>{selected?.name}</h2><p>{selected?.age} · {selected?.area} · <span className={selected?.online ? "profile-online" : "profile-away"}>{selected?.online ? "Here now" : "Away"}</span></p></div></div>
           <p className="profile-bio">{selected?.note}</p><div className="profile-tags">{selected?.tags.map(tag => <span key={tag}>{tag}</span>)}</div>
           {sent ? <div className="sent-note"><strong>Hello sent.</strong><p>Your introduction is waiting in their inbox. They can accept, politely pass, or report it—no awkward matching game.</p></div> : <><p className="profile-prompt">Feel a spark? Start with something from their profile.</p><textarea defaultValue={`Your note about ${selected?.tags[1].toLowerCase()} caught my attention—what got you into it?`} aria-label="Introduction message"/><p className="character-note">Thoughtful introductions get thoughtful replies.</p><button className="primary full" onClick={() => setSent(true)}>Send introduction <span>→</span></button></>}
         </>}
