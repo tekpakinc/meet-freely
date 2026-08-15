@@ -5,6 +5,7 @@ import { isSupabaseConfigured, supabase } from "./lib/supabase";
 
 type InstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: "accepted" | "dismissed" }> };
 type ProfilePhoto = { id: string; storage_path: string; is_primary: boolean; position: number; url: string };
+type RoomPerson = { id?: string; name: string; age: number | null; area: string; note: string; tags: string[]; initials: string; photoPosition?: string; photoUrl?: string; tone: string; online: boolean; sample?: boolean };
 
 async function prepareProfilePhoto(file: File) {
   const image = await createImageBitmap(file);
@@ -16,13 +17,13 @@ async function prepareProfilePhoto(file: File) {
   return await new Promise<Blob>((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("We couldn’t prepare that photo.")), "image/jpeg", .84));
 }
 
-const people = [
-  { name: "CityFern", age: 31, area: "West side", note: "Museum afternoons, tiny restaurants, and laughing too loudly.", tags: ["Long-term", "Art", "Food"], initials: "CF", photoPosition: "0% 0%", tone: "coral", online: true },
-  { name: "MilesAhead", age: 34, area: "North side", note: "Weekend cyclist. Weeknight cook. Looking for something steady.", tags: ["Long-term", "Outdoors", "Cooking"], initials: "MA", photoPosition: "50% 0%", tone: "sky", online: true },
-  { name: "SundayStatic", age: 29, area: "Center city", note: "Live music, used bookstores, and a very opinionated rescue dog.", tags: ["Dating", "Music", "Dogs"], initials: "SS", photoPosition: "100% 0%", tone: "gold", online: true },
-  { name: "SoftLaunch", age: 36, area: "East side", note: "Architect, amateur potter, professional finder of good coffee.", tags: ["Relationship", "Design", "Coffee"], initials: "SL", photoPosition: "0% 100%", tone: "plum", online: true },
-  { name: "JuniperJune", age: 32, area: "South side", note: "Equal parts homebody and last-minute road trip.", tags: ["Dating", "Travel", "Books"], initials: "JJ", photoPosition: "50% 100%", tone: "mint", online: false },
-  { name: "HeyItsRae", age: 30, area: "Within 10 miles", note: "Sunday brunch host. Terrible at trivia. Excellent teammate.", tags: ["Long-term", "Friends first", "Brunch"], initials: "HR", photoPosition: "100% 100%", tone: "rose", online: false },
+const people: RoomPerson[] = [
+  { name: "CityFern", age: 31, area: "West side", note: "Museum afternoons, tiny restaurants, and laughing too loudly.", tags: ["Long-term", "Art", "Food"], initials: "CF", photoPosition: "0% 0%", tone: "coral", online: true, sample: true },
+  { name: "MilesAhead", age: 34, area: "North side", note: "Weekend cyclist. Weeknight cook. Looking for something steady.", tags: ["Long-term", "Outdoors", "Cooking"], initials: "MA", photoPosition: "50% 0%", tone: "sky", online: true, sample: true },
+  { name: "SundayStatic", age: 29, area: "Center city", note: "Live music, used bookstores, and a very opinionated rescue dog.", tags: ["Dating", "Music", "Dogs"], initials: "SS", photoPosition: "100% 0%", tone: "gold", online: true, sample: true },
+  { name: "SoftLaunch", age: 36, area: "East side", note: "Architect, amateur potter, professional finder of good coffee.", tags: ["Relationship", "Design", "Coffee"], initials: "SL", photoPosition: "0% 100%", tone: "plum", online: true, sample: true },
+  { name: "JuniperJune", age: 32, area: "South side", note: "Equal parts homebody and last-minute road trip.", tags: ["Dating", "Travel", "Books"], initials: "JJ", photoPosition: "50% 100%", tone: "mint", online: false, sample: true },
+  { name: "HeyItsRae", age: 30, area: "Within 10 miles", note: "Sunday brunch host. Terrible at trivia. Excellent teammate.", tags: ["Long-term", "Friends first", "Brunch"], initials: "HR", photoPosition: "100% 100%", tone: "rose", online: false, sample: true },
 ];
 
 const rooms = [
@@ -39,8 +40,9 @@ export default function Home() {
   const [signedIn, setSignedIn] = useState(false);
   const [profileReady, setProfileReady] = useState(false);
   const [modal, setModal] = useState<"verify" | "onboarding" | "profile" | "hello" | "invite" | "messages" | null>(null);
-  const [selected, setSelected] = useState<(typeof people)[number] | null>(null);
+  const [selected, setSelected] = useState<RoomPerson | null>(null);
   const [sent, setSent] = useState(false);
+  const [introductionText, setIntroductionText] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
@@ -71,6 +73,10 @@ export default function Home() {
   const [photoBusy, setPhotoBusy] = useState(false);
   const [activeRoom, setActiveRoom] = useState("Food & coffee");
   const [swipeHintVisible, setSwipeHintVisible] = useState(true);
+  const [userId, setUserId] = useState<string | null>(null);
+  const [roomPeople, setRoomPeople] = useState<RoomPerson[]>([]);
+  const [roomMemberCount, setRoomMemberCount] = useState(0);
+  const [roomLoading, setRoomLoading] = useState(false);
 
   const loadPhotos = async (userId: string) => {
     if (!supabase) return;
@@ -87,6 +93,7 @@ export default function Home() {
     if (!supabase) return;
     const refreshAccess = async (userId?: string) => {
       setSignedIn(Boolean(userId));
+      setUserId(userId ?? null);
       if (!userId) { setVerified(false); setProfileReady(false); return; }
       const [{ data: account }, { data: profile }, { data: request }] = await Promise.all([
         supabase.from("accounts").select("state, verification, membership_active").eq("user_id", userId).maybeSingle(),
@@ -118,6 +125,33 @@ export default function Home() {
   }, []);
 
   useEffect(() => { window.localStorage.setItem("meet-freely-pins", JSON.stringify(pinnedPeople)); }, [pinnedPeople]);
+
+  useEffect(() => {
+    if (!supabase || !verified || !userId) { setRoomPeople([]); return; }
+    let active = true;
+    let channel: ReturnType<NonNullable<typeof supabase>["channel"]> | null = null;
+    const loadRoom = async () => {
+      setRoomLoading(true);
+      const { data: room } = await supabase.from("rooms").select("id").eq("name", activeRoom).maybeSingle();
+      if (!room || !active) { setRoomLoading(false); return; }
+      await supabase.from("room_members").upsert({ room_id: room.id, user_id: userId, state: "active", last_seen_at: new Date().toISOString() }, { onConflict: "room_id,user_id" });
+      const { data: members } = await supabase.from("room_members").select("user_id,bubble_color,last_seen_at").eq("room_id", room.id).neq("user_id", userId).order("last_seen_at", { ascending: false }).limit(30);
+      const memberIds = (members ?? []).map(member => member.user_id);
+      const { data: profiles } = memberIds.length ? await supabase.from("profiles").select("user_id,username,age,broad_area,bio,intentions,interests").in("user_id", memberIds).eq("discoverable", true) : { data: [] };
+      const profileIds = (profiles ?? []).map(profile => profile.user_id);
+      const { data: photoRows } = profileIds.length ? await supabase.from("profile_photos").select("user_id,storage_path").in("user_id", profileIds).eq("is_primary", true) : { data: [] };
+      const photoUrls = new Map<string,string>();
+      await Promise.all((photoRows ?? []).map(async photo => { const { data } = await supabase.storage.from("profile-photos").createSignedUrl(photo.storage_path, 3600); if (data?.signedUrl) photoUrls.set(photo.user_id, data.signedUrl); }));
+      const onlineIds = new Set<string>();
+      const syncPresence = () => { const state = channel?.presenceState<Record<string,string>>() ?? {}; Object.values(state).flat().forEach(entry => { if (entry.user_id) onlineIds.add(entry.user_id); }); };
+      channel = supabase.channel(`room:${room.id}`, { config: { presence: { key: userId } } }).on("presence", { event: "sync" }, () => { syncPresence(); setRoomPeople(current => current.map(person => ({ ...person, online: person.id ? onlineIds.has(person.id) : person.online }))); }).subscribe(async status => { if (status === "SUBSCRIBED") await channel?.track({ user_id: userId, room_id: room.id, online_at: new Date().toISOString() }); });
+      const memberById = new Map((members ?? []).map(member => [member.user_id, member]));
+      const mapped: RoomPerson[] = (profiles ?? []).map(profile => ({ id: profile.user_id, name: profile.username, age: profile.age, area: profile.broad_area || "Nearby area", note: profile.bio || "Say hello and ask what brought them into this room.", tags: [...(profile.intentions ?? []), ...(profile.interests ?? [])].slice(0,4), initials: profile.username.slice(0,2).toUpperCase(), photoUrl: photoUrls.get(profile.user_id), tone: memberById.get(profile.user_id)?.bubble_color ?? "mint", online: onlineIds.has(profile.user_id), sample: false }));
+      if (active) { setRoomPeople(mapped); setRoomMemberCount((members?.length ?? 0) + 1); setRoomLoading(false); }
+    };
+    void loadRoom();
+    return () => { active = false; if (channel) void supabase.removeChannel(channel); };
+  }, [activeRoom, verified, userId]);
 
   const enter = () => setModal("verify");
   const submitAuth = async () => {
@@ -182,7 +216,16 @@ export default function Home() {
     setHiddenPeople(current => [...current, draggingPerson]);
     setDraggingPerson(null);
   };
-  const hello = (person: (typeof people)[number]) => { setSelected(person); setSent(false); setModal("hello"); };
+  const hello = (person: RoomPerson) => { setSelected(person); setSent(false); setIntroductionText(`Your note about ${(person.tags[1] || person.tags[0] || "this room").toLowerCase()} caught my attention—what got you into it?`); setModal("hello"); };
+  const sendIntroduction = async () => {
+    if (!selected || introductionText.trim().length < 1) return;
+    if (!supabase || !userId || !selected.id) { setSent(true); return; }
+    setAuthBusy(true); setAuthMessage("");
+    const { error } = await supabase.from("introductions").insert({ sender_id: userId, recipient_id: selected.id, message: introductionText.trim() });
+    setAuthBusy(false);
+    if (error) return setAuthMessage(error.message);
+    setSent(true);
+  };
   const installApp = async () => {
     if (installPrompt) { await installPrompt.prompt(); await installPrompt.userChoice; setInstallPrompt(null); return; }
     setInstallHelpOpen(true);
@@ -226,6 +269,8 @@ export default function Home() {
   };
   const primaryPhoto = photos.find(photo => photo.is_primary) ?? photos[0];
   const activeRoomDetails = rooms.find(room => room.name === activeRoom) ?? rooms[2];
+  const visiblePeople = roomPeople.length ? roomPeople : people;
+  const visibleRoomCount = roomMemberCount || activeRoomDetails.count;
   const openMyProfile = () => { setAuthMessage(""); setModal("profile"); };
 
   if (!browserReady) {
@@ -235,11 +280,11 @@ export default function Home() {
   return (
     <main className={signedIn && verified ? "member-session" : "visitor-session"}>
       {signedIn && verified && <section className="mobile-app" aria-label="Meet Freely member room">
-        <header className="mobile-app-bar"><button className="app-menu-button" onClick={() => setMobileMenuOpen(true)} aria-label="Open app menu">☰</button><div><small>{activeRoom.toUpperCase()} · {locationReady ? "NEARBY FIRST" : broadArea.toUpperCase()}</small><strong>{activeRoomDetails.count + 1} here recently</strong></div><button className="my-mini-bubble" onClick={openMyProfile} aria-label="Edit my profile">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your profile" /> : username.slice(0, 2).toUpperCase() || "ME"}</button></header>
+        <header className="mobile-app-bar"><button className="app-menu-button" onClick={() => setMobileMenuOpen(true)} aria-label="Open app menu">☰</button><div><small>{activeRoom.toUpperCase()} · {locationReady ? "NEARBY FIRST" : broadArea.toUpperCase()}</small><strong>{roomLoading ? "Opening room…" : `${visibleRoomCount} here recently`}</strong></div><button className="my-mini-bubble" onClick={openMyProfile} aria-label="Edit my profile">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your profile" /> : username.slice(0, 2).toUpperCase() || "ME"}</button></header>
         <div className="mobile-room" onPointerDown={beginRoomSwipe} onPointerMove={moveRoom} onPointerUp={endRoomSwipe} onPointerCancel={endRoomSwipe}>
           <div className="mobile-bubble-field" style={{ transform: `translate(${roomOffset.x}px, ${roomOffset.y}px)` }}>
           <button className="mobile-own-bubble" onClick={openMyProfile}><span className="bubble-photo">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your primary profile" /> : username.slice(0, 2).toUpperCase() || "ME"}</span><strong>{username || "Your bubble"}</strong><small>You · tap to edit</small><span className="presence"><i />Here now</span></button>
-          {people.filter(person => !hiddenPeople.includes(person.name)).map((person, index) => <div role="button" tabIndex={0} key={person.name} className={`mobile-member-bubble mobile-bubble-${index + 1} ${person.tone} ${person.online ? "is-online" : "is-offline"} ${pinnedPeople.includes(person.name) ? "is-pinned" : ""}`} onClick={() => { if (!swipeMoved.current) hello(person); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") hello(person); }}><button className="bubble-pin" onClick={(event) => { event.stopPropagation(); setPinnedPeople(current => current.includes(person.name) ? current.filter(name => name !== person.name) : [...current, person.name]); }} aria-label={pinnedPeople.includes(person.name) ? `Unpin ${person.name}` : `Pin ${person.name}`}>{pinnedPeople.includes(person.name) ? "●" : "⌖"}</button><span className="bubble-photo sample-photo" style={{backgroundPosition:person.photoPosition}} /><strong>{person.name}</strong><small>{person.age} · {person.area}</small><span className="presence"><i />{person.online ? "Here now" : "Away"}</span></div>)}
+          {visiblePeople.filter(person => !hiddenPeople.includes(person.name)).map((person, index) => <div role="button" tabIndex={0} key={person.id ?? person.name} className={`mobile-member-bubble mobile-bubble-${index + 1} ${person.tone} ${person.online ? "is-online" : "is-offline"} ${pinnedPeople.includes(person.name) ? "is-pinned" : ""}`} onClick={() => { if (!swipeMoved.current) hello(person); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") hello(person); }}><button className="bubble-pin" onClick={(event) => { event.stopPropagation(); setPinnedPeople(current => current.includes(person.name) ? current.filter(name => name !== person.name) : [...current, person.name]); }} aria-label={pinnedPeople.includes(person.name) ? `Unpin ${person.name}` : `Pin ${person.name}`}>{pinnedPeople.includes(person.name) ? "●" : "⌖"}</button><span className={`bubble-photo ${person.sample ? "sample-photo" : ""}`} style={person.photoUrl ? undefined : {backgroundPosition:person.photoPosition}}>{person.photoUrl ? <img src={person.photoUrl} alt={`${person.name} profile`} /> : person.sample ? "" : person.initials}</span><strong>{person.name}</strong><small>{person.age ? `${person.age} · ` : ""}{person.area}</small><span className="presence"><i />{person.online ? "Here now" : "Away"}</span></div>)}
           </div>{swipeHintVisible && <span className="swipe-hint">Swipe the room to explore farther</span>}
           <button className="mobile-invite-action" onClick={() => { setAuthMessage(""); setModal("invite"); }}>＋ <span>Post an invitation</span></button>
         </div>
@@ -293,19 +338,19 @@ export default function Home() {
       </section>
 
       <section className="room-section" id="room">
-        <div className="section-heading"><div><p className="eyebrow"><span className="live-dot" /> {activeRoom.toUpperCase()} ROOM</p><h2>Everyone here shares an interest.</h2><p className="desktop-room-count">{activeRoomDetails.count} people have been here recently · nearest broad areas first</p></div><div className="filters"><button className="active-filter">Here now</button><button onClick={() => document.getElementById("invites")?.scrollIntoView({behavior:"smooth"})}>Open invitations</button><button onClick={() => setModal("messages")}>Messages</button></div></div>
+        <div className="section-heading"><div><p className="eyebrow"><span className="live-dot" /> {activeRoom.toUpperCase()} ROOM</p><h2>Everyone here shares an interest.</h2><p className="desktop-room-count">{roomLoading ? "Opening the live room…" : `${visibleRoomCount} people have been here recently · broad areas only`}</p></div><div className="filters"><button className="active-filter">Here now</button><button onClick={() => document.getElementById("invites")?.scrollIntoView({behavior:"smooth"})}>Open invitations</button><button onClick={() => setModal("messages")}>Messages</button></div></div>
         <div className={`bubble-room ${!verified ? "visitor-room" : ""}`}>
-          {people.filter(person => !hiddenPeople.includes(person.name)).map((person, index) => (
-            <div role="button" tabIndex={0} draggable className={`member-bubble room-bubble bubble-${index + 1} ${person.tone} ${person.online ? "is-online" : "is-offline"} ${pinnedPeople.includes(person.name) ? "is-pinned" : ""}`} key={person.name} onDragStart={() => setDraggingPerson(person.name)} onDragEnd={() => setDraggingPerson(null)} onClick={() => verified ? hello(person) : enter()} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") verified ? hello(person) : enter(); }} aria-label={verified ? `Open ${person.name} profile` : "Verify to meet people in this room"}>
+          {visiblePeople.filter(person => !hiddenPeople.includes(person.name)).map((person, index) => (
+            <div role="button" tabIndex={0} draggable className={`member-bubble room-bubble bubble-${index + 1} ${person.tone} ${person.online ? "is-online" : "is-offline"} ${pinnedPeople.includes(person.name) ? "is-pinned" : ""}`} key={person.id ?? person.name} onDragStart={() => setDraggingPerson(person.name)} onDragEnd={() => setDraggingPerson(null)} onClick={() => verified ? hello(person) : enter()} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") verified ? hello(person) : enter(); }} aria-label={verified ? `Open ${person.name} profile` : "Verify to meet people in this room"}>
               {verified && <button className="desktop-bubble-pin" onClick={(event) => { event.stopPropagation(); setPinnedPeople(current => current.includes(person.name) ? current.filter(name => name !== person.name) : [...current, person.name]); }} aria-label={pinnedPeople.includes(person.name) ? `Unpin ${person.name}` : `Pin ${person.name}`}>{pinnedPeople.includes(person.name) ? "●" : "⌖"}</button>}
               <span className="bubble-shine" />
-              <span className={`bubble-photo ${verified ? "sample-photo" : ""}`} style={verified ? {backgroundPosition:person.photoPosition} : undefined}>{verified ? "" : "•"}</span>
+              <span className={`bubble-photo ${verified && person.sample ? "sample-photo" : ""}`} style={verified && !person.photoUrl ? {backgroundPosition:person.photoPosition} : undefined}>{verified ? person.photoUrl ? <img src={person.photoUrl} alt={`${person.name} profile`} /> : person.sample ? "" : person.initials : "•"}</span>
               <strong>{verified ? person.name : "Verified person"}</strong>
               <small>{verified ? `${person.age} · ${person.area}` : "Identity protected"}</small>
               <span className="presence"><i />{person.online ? "Here now" : "Away"}</span>
             </div>
           ))}
-          {verified ? <button className="desktop-own-bubble" onClick={openMyProfile}><span className="bubble-photo">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your primary profile" /> : username.slice(0,2).toUpperCase() || "ME"}</span><strong>{username || "Your bubble"}</strong><small>You · tap to edit</small><span className="presence"><i />Here now</span></button> : <div className="room-center"><span>{activeRoom.toUpperCase()}</span><strong>{activeRoomDetails.count} nearby</strong><small>Verify to see and meet everyone in this room.</small></div>}
+          {verified ? <button className="desktop-own-bubble" onClick={openMyProfile}><span className="bubble-photo">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your primary profile" /> : username.slice(0,2).toUpperCase() || "ME"}</span><strong>{username || "Your bubble"}</strong><small>You · tap to edit</small><span className="presence"><i />Here now</span></button> : <div className="room-center"><span>{activeRoom.toUpperCase()}</span><strong>{visibleRoomCount} nearby</strong><small>Verify to see and meet everyone in this room.</small></div>}
           <div className={`block-dock ${draggingPerson ? "is-ready" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={hideDraggedPerson}><span>×</span><strong>Hide & block</strong><small>Drag someone here for mutual invisibility</small></div>
           {hiddenPeople.length > 0 && <button className="undo-hide" onClick={() => setHiddenPeople(current => current.slice(0, -1))}>Undo last hide</button>}
         </div>
@@ -373,9 +418,9 @@ export default function Home() {
           <button className="primary full" onClick={postInvitation} disabled={inviteText.trim().length < 5 || authBusy}>{authBusy ? "Posting…" : "Post for 24 hours"} <span>→</span></button>
           {authMessage && <p className="auth-message" role="status">{authMessage}</p>}
         </> : <>
-          <div className="member-profile-head"><div className={`modal-avatar sample-photo ${selected?.tone}`} style={{backgroundPosition:selected?.photoPosition}} /><div><p className="eyebrow">MEMBER PROFILE · SAMPLE</p><h2>{selected?.name}</h2><p>{selected?.age} · {selected?.area} · <span className={selected?.online ? "profile-online" : "profile-away"}>{selected?.online ? "Here now" : "Away"}</span></p></div></div>
+          <div className="member-profile-head"><div className={`modal-avatar ${selected?.sample ? "sample-photo" : ""} ${selected?.tone}`} style={selected?.photoUrl ? undefined : {backgroundPosition:selected?.photoPosition}}>{selected?.photoUrl ? <img src={selected.photoUrl} alt={`${selected.name} profile`} /> : selected?.sample ? "" : selected?.initials}</div><div><p className="eyebrow">MEMBER PROFILE{selected?.sample ? " · SAMPLE" : ""}</p><h2>{selected?.name}</h2><p>{selected?.age ? `${selected.age} · ` : ""}{selected?.area} · <span className={selected?.online ? "profile-online" : "profile-away"}>{selected?.online ? "Here now" : "Away"}</span></p></div></div>
           <p className="profile-bio">{selected?.note}</p><div className="profile-tags">{selected?.tags.map(tag => <span key={tag}>{tag}</span>)}</div>
-          {sent ? <div className="sent-note"><strong>Hello sent.</strong><p>Your introduction is waiting in their inbox. They can accept, politely pass, or report it—no awkward matching game.</p></div> : <><p className="profile-prompt">Feel a spark? Start with something from their profile.</p><textarea defaultValue={`Your note about ${selected?.tags[1].toLowerCase()} caught my attention—what got you into it?`} aria-label="Introduction message"/><p className="character-note">Thoughtful introductions get thoughtful replies.</p><button className="primary full" onClick={() => setSent(true)}>Send introduction <span>→</span></button></>}
+          {sent ? <div className="sent-note"><strong>Hello sent.</strong><p>Your introduction is waiting in their inbox. They can accept, politely pass, or report it—no awkward matching game.</p></div> : <><p className="profile-prompt">Feel a spark? Start with something from their profile.</p><textarea value={introductionText} onChange={(event) => setIntroductionText(event.target.value.slice(0,500))} aria-label="Introduction message"/><p className="character-note">{introductionText.length}/500 · Thoughtful introductions get thoughtful replies.</p><button className="primary full" onClick={sendIntroduction} disabled={!introductionText.trim() || authBusy}>{authBusy ? "Sending…" : "Send introduction"} <span>→</span></button>{authMessage && <p className="auth-message" role="status">{authMessage}</p>}</>}
         </>}
       </div></div>}
     </main>
