@@ -288,23 +288,24 @@ export default function Home() {
             </article>
             <button className="post-invite" onClick={verified ? () => { setAuthMessage(""); setModal("invite"); } : enter}><span>＋</span><div><strong>Post an open invitation</strong><small>Tell the room what you feel like doing.</small></div></button>
           </div>
-          <aside className="interest-rooms"><p className="eyebrow">BROWSE ROOMS</p>{rooms.map(room => <button key={room.name}><span className={`room-icon ${room.name === "Live music" ? "plum" : room.name === "Food & coffee" ? "gold" : room.name === "Outdoors" ? "mint" : "coral"}`}>{room.icon}</span><div><strong>{room.name}</strong><small>{room.count} here now</small></div><b>→</b></button>)}</aside>
+          <aside className="interest-rooms"><p className="eyebrow">BROWSE ROOMS</p>{rooms.map(room => <button className={activeRoom === room.name ? "selected-room" : ""} aria-current={activeRoom === room.name ? "page" : undefined} key={room.name} onClick={() => { setActiveRoom(room.name); setRoomOffset({x:0,y:0}); document.getElementById("room")?.scrollIntoView({behavior:"smooth"}); }}><span className={`room-icon ${room.name === "Live music" ? "plum" : room.name === "Food & coffee" ? "gold" : room.name === "Outdoors" ? "mint" : "coral"}`}>{room.icon}</span><div><strong>{room.name}</strong><small>{room.count} here recently</small></div><b>{activeRoom === room.name ? "✓" : "→"}</b></button>)}</aside>
         </div>
       </section>
 
       <section className="room-section" id="room">
-        <div className="section-heading"><div><p className="eyebrow">FOOD & COFFEE ROOM</p><h2>Everyone here shares an interest.</h2></div><div className="filters"><button className="active-filter">Here now</button><button>Open invitations</button><button>Room chat</button></div></div>
+        <div className="section-heading"><div><p className="eyebrow"><span className="live-dot" /> {activeRoom.toUpperCase()} ROOM</p><h2>Everyone here shares an interest.</h2><p className="desktop-room-count">{activeRoomDetails.count} people have been here recently · nearest broad areas first</p></div><div className="filters"><button className="active-filter">Here now</button><button onClick={() => document.getElementById("invites")?.scrollIntoView({behavior:"smooth"})}>Open invitations</button><button onClick={() => setModal("messages")}>Messages</button></div></div>
         <div className={`bubble-room ${!verified ? "visitor-room" : ""}`}>
           {people.filter(person => !hiddenPeople.includes(person.name)).map((person, index) => (
-            <button draggable className={`member-bubble room-bubble bubble-${index + 1} ${person.tone} ${person.online ? "is-online" : "is-offline"}`} key={person.name} onDragStart={() => setDraggingPerson(person.name)} onDragEnd={() => setDraggingPerson(null)} onClick={() => verified ? hello(person) : enter()} aria-label={verified ? `Open ${person.name} profile` : "Verify to meet people in this room"}>
+            <div role="button" tabIndex={0} draggable className={`member-bubble room-bubble bubble-${index + 1} ${person.tone} ${person.online ? "is-online" : "is-offline"} ${pinnedPeople.includes(person.name) ? "is-pinned" : ""}`} key={person.name} onDragStart={() => setDraggingPerson(person.name)} onDragEnd={() => setDraggingPerson(null)} onClick={() => verified ? hello(person) : enter()} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") verified ? hello(person) : enter(); }} aria-label={verified ? `Open ${person.name} profile` : "Verify to meet people in this room"}>
+              {verified && <button className="desktop-bubble-pin" onClick={(event) => { event.stopPropagation(); setPinnedPeople(current => current.includes(person.name) ? current.filter(name => name !== person.name) : [...current, person.name]); }} aria-label={pinnedPeople.includes(person.name) ? `Unpin ${person.name}` : `Pin ${person.name}`}>{pinnedPeople.includes(person.name) ? "●" : "⌖"}</button>}
               <span className="bubble-shine" />
               <span className={`bubble-photo ${verified ? "sample-photo" : ""}`} style={verified ? {backgroundPosition:person.photoPosition} : undefined}>{verified ? "" : "•"}</span>
               <strong>{verified ? person.name : "Verified person"}</strong>
               <small>{verified ? `${person.age} · ${person.area}` : "Identity protected"}</small>
               <span className="presence"><i />{person.online ? "Here now" : "Away"}</span>
-            </button>
+            </div>
           ))}
-          <div className="room-center"><span>FOOD & COFFEE</span><strong>{people.filter(person => person.online && !hiddenPeople.includes(person.name)).length} here now</strong><small>Chat with the room or say hello privately.</small></div>
+          {verified ? <button className="desktop-own-bubble" onClick={openMyProfile}><span className="bubble-photo">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your primary profile" /> : username.slice(0,2).toUpperCase() || "ME"}</span><strong>{username || "Your bubble"}</strong><small>You · tap to edit</small><span className="presence"><i />Here now</span></button> : <div className="room-center"><span>{activeRoom.toUpperCase()}</span><strong>{activeRoomDetails.count} nearby</strong><small>Verify to see and meet everyone in this room.</small></div>}
           <div className={`block-dock ${draggingPerson ? "is-ready" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={hideDraggedPerson}><span>×</span><strong>Hide & block</strong><small>Drag someone here for mutual invisibility</small></div>
           {hiddenPeople.length > 0 && <button className="undo-hide" onClick={() => setHiddenPeople(current => current.slice(0, -1))}>Undo last hide</button>}
         </div>
