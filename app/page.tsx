@@ -274,7 +274,7 @@ export default function Home() {
   const openMyProfile = () => { setAuthMessage(""); setModal("profile"); };
 
   if (!browserReady) {
-    return <main className="app-loading" aria-busy="true"><div className="loading-bubble"><span>●</span><strong>meet freely</strong><small>Opening the room…</small></div></main>;
+    return <main className="app-loading" aria-busy="true"><div className="loading-bubble"><img className="loading-brand-icon" src="/app-icon.png" alt="" /><strong>meet freely</strong><small>Opening the room…</small></div></main>;
   }
 
   return (

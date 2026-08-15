@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   keywords: ["dating app", "dating without swiping", "meet local singles", "interest based dating", "verified dating app"],
   alternates: { canonical: "/" },
   manifest: "/manifest.webmanifest",
-  icons: { icon: [{ url: "/favicon.svg", type: "image/svg+xml" }, { url: "/icon-192.png", sizes: "192x192", type: "image/png" }], apple: [{ url: "/apple-touch-icon.png", sizes: "180x180" }] },
+  icons: { icon: [{ url: "/icon-32.png", sizes: "32x32", type: "image/png" }, { url: "/icon-192.png", sizes: "192x192", type: "image/png" }], shortcut: "/icon-32.png", apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }] },
   appleWebApp: { capable: true, title: "Meet Freely", statusBarStyle: "black-translucent" },
   formatDetection: { telephone: false },
   openGraph: { title: "Meet Freely — Dating Without Swiping", description: "Walk into a dating room, look around, and say hello. No match required.", url: "/", siteName: "Meet Freely", type: "website", images: [{ url: "/og.png", width: 1536, height: 1024, alt: "Meet Freely — Meet freely. No match required." }] },
