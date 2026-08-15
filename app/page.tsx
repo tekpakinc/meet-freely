@@ -5,9 +5,13 @@ import { isSupabaseConfigured, supabase } from "./lib/supabase";
 
 type InstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: "accepted" | "dismissed" }> };
 type ProfilePhoto = { id: string; storage_path: string; is_primary: boolean; position: number; url: string };
-type RoomPerson = { id?: string; name: string; age: number | null; area: string; note: string; tags: string[]; initials: string; gender?: string | null; photoPosition?: string; photoUrl?: string; tone: string; online: boolean; sample?: boolean };
+type RoomPerson = { id?: string; name: string; age: number | null; area: string; note: string; tags: string[]; initials: string; gender?: string | null; interestedIn?: string[]; preferredMinAge?: number; preferredMaxAge?: number; photoPosition?: string; photoUrl?: string; tone: string; online: boolean; sample?: boolean };
 type InvitationItem = { id: string; body: string; broad_area: string | null; created_at: string; expires_at: string; author: RoomPerson; roomName: string };
 type IntroductionItem = { id: string; sender_id: string; recipient_id: string; message: string; state: "pending" | "accepted" | "passed" | "reported"; created_at: string; personName: string; incoming: boolean };
+type DirectMessage = { id: string; conversation_id: string; sender_id: string; recipient_id: string; body: string; read_at: string | null; created_at: string };
+type ConversationItem = { id: string; member_a: string; member_b: string; otherId: string; otherName: string; last_message_at: string; unread: number; preview: string };
+type VerificationReview = { user_id: string; username: string; birth_date: string | null; status: string; submitted_at: string | null; accountState: string };
+type SafetyReport = { id: string; reporter_id: string; reported_id: string; reason: string; status: string; created_at: string };
 
 async function prepareProfilePhoto(file: File) {
   const image = await createImageBitmap(file);
@@ -43,7 +47,7 @@ export default function Home() {
   const [verified, setVerified] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
   const [profileReady, setProfileReady] = useState(false);
-  const [modal, setModal] = useState<"verify" | "onboarding" | "profile" | "hello" | "invite" | "messages" | "filters" | null>(null);
+  const [modal, setModal] = useState<"verify" | "onboarding" | "profile" | "hello" | "invite" | "messages" | "chat" | "filters" | "admin" | null>(null);
   const [selected, setSelected] = useState<RoomPerson | null>(null);
   const [sent, setSent] = useState(false);
   const [introductionText, setIntroductionText] = useState("");
@@ -60,6 +64,10 @@ export default function Home() {
   const [intention, setIntention] = useState("");
   const [gender, setGender] = useState("");
   const [interestedIn, setInterestedIn] = useState<string[]>([]);
+  const [myAge, setMyAge] = useState<number | null>(null);
+  const [preferredMinAge, setPreferredMinAge] = useState(18);
+  const [preferredMaxAge, setPreferredMaxAge] = useState(99);
+  const [compatibilityMode, setCompatibilityMode] = useState<"suggested" | "strict">("suggested");
   const [discoverable, setDiscoverable] = useState(false);
   const [verificationStatus, setVerificationStatus] = useState("unverified");
   const [inviteText, setInviteText] = useState("");
@@ -92,6 +100,13 @@ export default function Home() {
   const [filterArea, setFilterArea] = useState("");
   const [filterOnlineOnly, setFilterOnlineOnly] = useState(false);
   const [filterGender, setFilterGender] = useState("");
+  const [conversations, setConversations] = useState<ConversationItem[]>([]);
+  const [directMessages, setDirectMessages] = useState<DirectMessage[]>([]);
+  const [selectedConversation, setSelectedConversation] = useState<ConversationItem | null>(null);
+  const [messageText, setMessageText] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [verificationReviews, setVerificationReviews] = useState<VerificationReview[]>([]);
+  const [safetyReports, setSafetyReports] = useState<SafetyReport[]>([]);
 
   const loadPhotos = async (userId: string) => {
     if (!supabase) return;
@@ -109,14 +124,16 @@ export default function Home() {
     const refreshAccess = async (userId?: string) => {
       setSignedIn(Boolean(userId));
       setUserId(userId ?? null);
-      if (!userId) { setVerified(false); setProfileReady(false); return; }
+      if (!userId) { setVerified(false); setProfileReady(false); setIsAdmin(false); return; }
+      const { data: userData } = await supabase.auth.getUser();
+      setIsAdmin(userData.user?.app_metadata?.role === "admin");
       const [{ data: account }, { data: profile }, { data: request }] = await Promise.all([
         supabase.from("accounts").select("state, verification, membership_active").eq("user_id", userId).maybeSingle(),
-        supabase.from("profiles").select("username, broad_area, interests, bio, intentions, gender, interested_in, discoverable").eq("user_id", userId).maybeSingle(),
+        supabase.from("profiles").select("username, age, broad_area, interests, bio, intentions, gender, interested_in, preferred_min_age, preferred_max_age, compatibility_mode, discoverable").eq("user_id", userId).maybeSingle(),
         supabase.from("verification_requests").select("status").eq("user_id", userId).maybeSingle(),
       ]);
       setProfileReady(Boolean(profile));
-      if (profile) { setUsername(profile.username); setBroadArea(profile.broad_area ?? ""); setInterests(profile.interests ?? []); setBio(profile.bio ?? ""); setIntention(profile.intentions?.[0] ?? ""); setGender(profile.gender ?? ""); setInterestedIn(profile.interested_in ?? []); setDiscoverable(profile.discoverable ?? false); }
+      if (profile) { setUsername(profile.username); setMyAge(profile.age ?? null); setBroadArea(profile.broad_area ?? ""); setInterests(profile.interests ?? []); setBio(profile.bio ?? ""); setIntention(profile.intentions?.[0] ?? ""); setGender(profile.gender ?? ""); setInterestedIn(profile.interested_in ?? []); setPreferredMinAge(profile.preferred_min_age ?? 18); setPreferredMaxAge(profile.preferred_max_age ?? 99); setCompatibilityMode(profile.compatibility_mode === "strict" ? "strict" : "suggested"); setDiscoverable(profile.discoverable ?? false); }
       setVerificationStatus(request?.status ?? account?.verification ?? "unverified");
       setVerified(account?.state === "active" && account.verification === "verified" && account.membership_active === true);
       if (profile) await loadPhotos(userId);
@@ -154,7 +171,7 @@ export default function Home() {
       await supabase.from("room_members").upsert({ room_id: room.id, user_id: userId, state: "active", last_seen_at: new Date().toISOString() }, { onConflict: "room_id,user_id" });
       const { data: members } = await supabase.from("room_members").select("user_id,bubble_color,last_seen_at").eq("room_id", room.id).neq("user_id", userId).order("last_seen_at", { ascending: false }).limit(30);
       const memberIds = (members ?? []).map(member => member.user_id);
-      const { data: profiles } = memberIds.length ? await supabase.from("profiles").select("user_id,username,age,broad_area,bio,intentions,interests,gender").in("user_id", memberIds).eq("discoverable", true) : { data: [] };
+      const { data: profiles } = memberIds.length ? await supabase.from("profiles").select("user_id,username,age,broad_area,bio,intentions,interests,gender,interested_in,preferred_min_age,preferred_max_age").in("user_id", memberIds).eq("discoverable", true) : { data: [] };
       const profileIds = (profiles ?? []).map(profile => profile.user_id);
       const { data: photoRows } = profileIds.length ? await supabase.from("profile_photos").select("user_id,storage_path").in("user_id", profileIds).eq("is_primary", true) : { data: [] };
       const photoUrls = new Map<string,string>();
@@ -163,7 +180,7 @@ export default function Home() {
       const syncPresence = () => { const state = channel?.presenceState<Record<string,string>>() ?? {}; Object.values(state).flat().forEach(entry => { if (entry.user_id) onlineIds.add(entry.user_id); }); };
       channel = supabase.channel(`room:${room.id}`, { config: { presence: { key: userId } } }).on("presence", { event: "sync" }, () => { syncPresence(); setRoomPeople(current => current.map(person => ({ ...person, online: person.id ? onlineIds.has(person.id) : person.online }))); }).subscribe(async status => { if (status === "SUBSCRIBED") await channel?.track({ user_id: userId, room_id: room.id, online_at: new Date().toISOString() }); });
       const memberById = new Map((members ?? []).map(member => [member.user_id, member]));
-      const mapped: RoomPerson[] = (profiles ?? []).map(profile => ({ id: profile.user_id, name: profile.username, age: profile.age, area: profile.broad_area || "Nearby area", note: profile.bio || "Say hello and ask what brought them into this room.", tags: [...(profile.intentions ?? []), ...(profile.interests ?? [])].slice(0,4), initials: profile.username.slice(0,2).toUpperCase(), gender:profile.gender, photoUrl: photoUrls.get(profile.user_id), tone: memberById.get(profile.user_id)?.bubble_color ?? "mint", online: onlineIds.has(profile.user_id), sample: false }));
+      const mapped: RoomPerson[] = (profiles ?? []).map(profile => ({ id: profile.user_id, name: profile.username, age: profile.age, area: profile.broad_area || "Nearby area", note: profile.bio || "Say hello and ask what brought them into this room.", tags: [...(profile.intentions ?? []), ...(profile.interests ?? [])].slice(0,4), initials: profile.username.slice(0,2).toUpperCase(), gender:profile.gender, interestedIn:profile.interested_in ?? [], preferredMinAge:profile.preferred_min_age ?? 18, preferredMaxAge:profile.preferred_max_age ?? 99, photoUrl: photoUrls.get(profile.user_id), tone: memberById.get(profile.user_id)?.bubble_color ?? "mint", online: onlineIds.has(profile.user_id), sample: false }));
       if (active) { setRoomPeople(mapped); setRoomMemberCount((members?.length ?? 0) + 1); setRoomLoading(false); }
     };
     void loadRoom();
@@ -190,6 +207,61 @@ export default function Home() {
     return () => { active = false; };
   }, [verified, userId, activityVersion, roomPeople, username, broadArea, bio, interests]);
 
+  const loadConversations = async () => {
+    if (!supabase || !userId) return;
+    const { data: rows } = await supabase.from("conversations").select("id,member_a,member_b,last_message_at").order("last_message_at", { ascending:false });
+    const others = (rows ?? []).map(row => row.member_a === userId ? row.member_b : row.member_a);
+    const ids = (rows ?? []).map(row => row.id);
+    const [{ data: profiles }, { data: messages }] = await Promise.all([
+      others.length ? supabase.from("profiles").select("user_id,username").in("user_id", others) : Promise.resolve({ data: [] }),
+      ids.length ? supabase.from("direct_messages").select("id,conversation_id,sender_id,recipient_id,body,read_at,created_at").in("conversation_id", ids).order("created_at", { ascending:false }).limit(300) : Promise.resolve({ data: [] }),
+    ]);
+    const names = new Map((profiles ?? []).map(profile => [profile.user_id, profile.username]));
+    setConversations((rows ?? []).map(row => { const otherId = row.member_a === userId ? row.member_b : row.member_a; const related = (messages ?? []).filter(message => message.conversation_id === row.id); return { ...row, otherId, otherName:names.get(otherId) ?? "Meet Freely member", unread:related.filter(message => message.recipient_id === userId && !message.read_at).length, preview:related[0]?.body ?? "You accepted an introduction. Say hello when you’re ready." }; }));
+  };
+
+  useEffect(() => {
+    if (!supabase || !verified || !userId) { setConversations([]); return; }
+    void loadConversations();
+    const channel = supabase.channel(`messages:${userId}`).on("postgres_changes", { event:"*", schema:"public", table:"direct_messages" }, () => void loadConversations()).subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, [verified, userId, activityVersion]);
+
+  const loadAdminConsole = async () => {
+    if (!supabase || !isAdmin) return;
+    setAuthBusy(true); setAuthMessage("");
+    const [{ data: requests, error: requestError }, { data: reports, error: reportError }] = await Promise.all([
+      supabase.from("verification_requests").select("user_id,birth_date,status,submitted_at").order("submitted_at", { ascending:false }),
+      supabase.from("reports").select("id,reporter_id,reported_id,reason,status,created_at").order("created_at", { ascending:false }),
+    ]);
+    const ids = (requests ?? []).map(row => row.user_id);
+    const [{ data: profiles }, { data: accounts }] = await Promise.all([
+      ids.length ? supabase.from("profiles").select("user_id,username").in("user_id", ids) : Promise.resolve({data:[]}),
+      ids.length ? supabase.from("accounts").select("user_id,state").in("user_id", ids) : Promise.resolve({data:[]}),
+    ]);
+    const names = new Map((profiles ?? []).map(row => [row.user_id,row.username])); const states = new Map((accounts ?? []).map(row => [row.user_id,row.state]));
+    setVerificationReviews((requests ?? []).map(row => ({...row, username:names.get(row.user_id) ?? "Member", accountState:states.get(row.user_id) ?? "pending"})));
+    setSafetyReports(reports ?? []); setAuthMessage(requestError?.message ?? reportError?.message ?? ""); setAuthBusy(false);
+  };
+  const openAdminConsole = () => { setModal("admin"); void loadAdminConsole(); };
+  const reviewVerification = async (memberId: string, decision: "verified" | "failed") => {
+    if (!supabase || !isAdmin || !userId) return;
+    setAuthBusy(true);
+    const [{ error:a }, { error:b }] = await Promise.all([
+      supabase.from("verification_requests").update({status:decision,reviewed_at:new Date().toISOString()}).eq("user_id",memberId),
+      supabase.from("accounts").update({verification:decision,state:decision === "verified" ? "active" : "pending"}).eq("user_id",memberId),
+    ]);
+    setAuthMessage(a?.message ?? b?.message ?? (decision === "verified" ? "Member approved." : "Verification rejected.")); setAuthBusy(false); await loadAdminConsole();
+  };
+  const setAccountState = async (memberId: string, state: "active" | "paused" | "banned") => {
+    if (!supabase || !isAdmin) return;
+    const { error } = await supabase.from("accounts").update({state}).eq("user_id",memberId); setAuthMessage(error?.message ?? `Account set to ${state}.`); await loadAdminConsole();
+  };
+  const reviewReport = async (reportId: string, status: "reviewed" | "actioned" | "dismissed") => {
+    if (!supabase || !isAdmin || !userId) return;
+    const { error } = await supabase.from("reports").update({status,reviewed_at:new Date().toISOString(),reviewer_id:userId}).eq("id",reportId); setAuthMessage(error?.message ?? `Report marked ${status}.`); await loadAdminConsole();
+  };
+
   const enter = () => setModal("verify");
   const submitAuth = async () => {
     if (!supabase || !email || password.length < 8) return;
@@ -215,14 +287,15 @@ export default function Home() {
     if (!userId) { setAuthBusy(false); return setAuthMessage("Please sign in again."); }
     const adultCutoff = new Date(); adultCutoff.setFullYear(adultCutoff.getFullYear() - 18);
     if (new Date(`${birthDate}T12:00:00`) > adultCutoff) { setAuthBusy(false); return setAuthMessage("Meet Freely is only available to adults age 18 and older."); }
+    const age = Math.floor((Date.now() - new Date(`${birthDate}T12:00:00`).getTime()) / 31557600000);
     const [{ error: profileError }, { error: verificationError }] = await Promise.all([
-      supabase.from("profiles").upsert({ user_id: userId, username, broad_area: broadArea, interests, discoverable: false }),
+      supabase.from("profiles").upsert({ user_id: userId, username, age, broad_area: broadArea, interests, gender:gender || null, interested_in:interestedIn, preferred_min_age:preferredMinAge, preferred_max_age:preferredMaxAge, compatibility_mode:compatibilityMode, discoverable: false }),
       supabase.from("verification_requests").upsert({ user_id: userId, adult_attested: true, birth_date: birthDate, status: "pending", submitted_at: new Date().toISOString() }),
     ]);
     const error = profileError ?? verificationError;
     setAuthBusy(false);
     if (error) return setAuthMessage(error.message);
-    setProfileReady(true); setVerificationStatus("pending"); setAuthMessage("");
+    setMyAge(age); setProfileReady(true); setVerificationStatus("pending"); setAuthMessage("");
   };
   const signOut = async () => { await supabase?.auth.signOut(); setSignedIn(false); setVerified(false); setProfileReady(false); setModal(null); };
   const updateProfile = async () => {
@@ -231,7 +304,7 @@ export default function Home() {
     const { data: sessionData } = await supabase.auth.getSession();
     const userId = sessionData.session?.user.id;
     if (!userId) { setAuthBusy(false); return setAuthMessage("Please sign in again."); }
-    const { error } = await supabase.from("profiles").update({ username, broad_area: broadArea, bio: bio.trim() || null, intentions: intention ? [intention] : [], interests, gender:gender || null, interested_in:interestedIn, discoverable }).eq("user_id", userId);
+    const { error } = await supabase.from("profiles").update({ username, broad_area: broadArea, bio: bio.trim() || null, intentions: intention ? [intention] : [], interests, gender:gender || null, interested_in:interestedIn, preferred_min_age:preferredMinAge, preferred_max_age:preferredMaxAge, compatibility_mode:compatibilityMode, discoverable }).eq("user_id", userId);
     setAuthBusy(false);
     setAuthMessage(error ? error.message : "Profile saved. Your bubble is up to date.");
   };
@@ -274,6 +347,33 @@ export default function Home() {
     setAuthBusy(false);
     if (error) return setAuthMessage(error.message);
     setIntroductions(current => current.map(item => item.id === id ? { ...item, state } : item));
+    setActivityVersion(value => value + 1);
+  };
+  const openConversation = async (conversation: ConversationItem) => {
+    if (!supabase || !userId) return;
+    setSelectedConversation(conversation); setMessageText(""); setModal("chat");
+    const { data } = await supabase.from("direct_messages").select("id,conversation_id,sender_id,recipient_id,body,read_at,created_at").eq("conversation_id", conversation.id).order("created_at");
+    setDirectMessages(data ?? []);
+    await supabase.from("direct_messages").update({ read_at:new Date().toISOString() }).eq("conversation_id", conversation.id).eq("recipient_id", userId).is("read_at", null);
+    void loadConversations();
+  };
+  const sendDirectMessage = async () => {
+    if (!supabase || !userId || !selectedConversation || !messageText.trim()) return;
+    setAuthBusy(true); setAuthMessage("");
+    const { error } = await supabase.from("direct_messages").insert({ conversation_id:selectedConversation.id, sender_id:userId, recipient_id:selectedConversation.otherId, body:messageText.trim() });
+    setAuthBusy(false);
+    if (error) return setAuthMessage(error.message);
+    setMessageText(""); await openConversation(selectedConversation);
+  };
+  const blockChatMember = async () => {
+    if (!supabase || !userId || !selectedConversation) return;
+    await supabase.from("blocks").upsert({ blocker_id:userId, blocked_id:selectedConversation.otherId });
+    setConversations(current => current.filter(item => item.id !== selectedConversation.id)); setModal("messages");
+  };
+  const reportChatMember = async () => {
+    if (!supabase || !userId || !selectedConversation) return;
+    const { error } = await supabase.from("reports").insert({ reporter_id:userId, reported_id:selectedConversation.otherId, reason:`Reported from private conversation ${selectedConversation.id}.` });
+    setAuthMessage(error?.message ?? "Report received. Our safety review can now examine this account.");
   };
   const installApp = async () => {
     if (installPrompt) { await installPrompt.prompt(); await installPrompt.userChoice; setInstallPrompt(null); return; }
@@ -320,6 +420,12 @@ export default function Home() {
   const activeRoomDetails = rooms.find(room => room.name === activeRoom) ?? rooms[2];
   const roomCandidates = roomPeople.length ? roomPeople : people;
   const visiblePeople = roomCandidates.filter(person => {
+    if (compatibilityMode === "strict" && !person.sample) {
+      if (person.age !== null && (person.age < preferredMinAge || person.age > preferredMaxAge)) return false;
+      if (interestedIn.length && person.gender && !interestedIn.includes(person.gender)) return false;
+      if (person.interestedIn?.length && gender && !person.interestedIn.includes(gender)) return false;
+      if (myAge !== null && (myAge < (person.preferredMinAge ?? 18) || myAge > (person.preferredMaxAge ?? 99))) return false;
+    }
     if (person.age !== null && (person.age < filterMinAge || person.age > filterMaxAge)) return false;
     if (filterOnlineOnly && !person.online) return false;
     if (filterIntention && !person.tags.some(tag => tag.toLowerCase().includes(filterIntention.toLowerCase()))) return false;
@@ -329,6 +435,7 @@ export default function Home() {
   });
   const activeFilterCount = Number(filterMinAge > 18 || filterMaxAge < 99) + Number(Boolean(filterIntention)) + Number(Boolean(filterGender)) + Number(Boolean(filterArea)) + Number(filterOnlineOnly);
   const visibleRoomCount = roomMemberCount || activeRoomDetails.count;
+  const unreadTotal = conversations.reduce((total, conversation) => total + conversation.unread, 0);
   const openMyProfile = () => { setAuthMessage(""); setModal("profile"); };
 
   if (!browserReady) {
@@ -338,6 +445,7 @@ export default function Home() {
   return (
     <main className={signedIn && verified ? "member-session" : "visitor-session"}>
       {signedIn && verified && <section className="mobile-app" aria-label="Meet Freely member room">
+        {isAdmin && <button className="admin-console-launch" onClick={openAdminConsole}>Owner console</button>}
         <header className="mobile-app-bar"><button className="app-menu-button" onClick={() => setMobileMenuOpen(true)} aria-label="Open app menu">☰</button><div><small>{activeRoom.toUpperCase()} · {locationReady ? "NEARBY FIRST" : broadArea.toUpperCase()}</small><strong>{roomLoading ? "Opening room…" : `${visibleRoomCount} here recently`}</strong></div><button className="my-mini-bubble" onClick={openMyProfile} aria-label="Edit my profile">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your profile" /> : username.slice(0, 2).toUpperCase() || "ME"}</button></header>
         <div className="mobile-room" onPointerDown={beginRoomSwipe} onPointerMove={moveRoom} onPointerUp={endRoomSwipe} onPointerCancel={endRoomSwipe}>
           <div className="mobile-bubble-field" style={{ transform: `translate(${roomOffset.x}px, ${roomOffset.y}px)` }}>
@@ -466,12 +574,18 @@ export default function Home() {
           <label className="field-label">What I’m open to<select className="auth-input" value={intention} onChange={(event) => setIntention(event.target.value)}><option value="">Still figuring it out</option><option>Dating</option><option>Long-term relationship</option><option>Friends first</option><option>Open to possibilities</option></select></label>
           <label className="field-label">My gender<select className="auth-input" value={gender} onChange={(event) => setGender(event.target.value)}><option value="">Prefer not to say</option>{genderOptions.map(option => <option key={option}>{option}</option>)}</select></label>
           <span className="field-label">Genders I’m open to meeting</span><div className="interest-picker">{genderOptions.map(option => <button type="button" className={interestedIn.includes(option) ? "selected" : ""} key={option} onClick={() => setInterestedIn(current => current.includes(option) ? current.filter(value => value !== option) : [...current,option])}>{option}</button>)}</div>
+          <div className="age-filter"><label className="field-label">Preferred minimum age<input className="auth-input" type="number" min="18" max="99" value={preferredMinAge} onChange={(event) => setPreferredMinAge(Math.max(18,Math.min(preferredMaxAge,Number(event.target.value) || 18)))} /></label><label className="field-label">Preferred maximum age<input className="auth-input" type="number" min="18" max="99" value={preferredMaxAge} onChange={(event) => setPreferredMaxAge(Math.min(99,Math.max(preferredMinAge,Number(event.target.value) || 99)))} /></label></div>
+          <label className="field-label">Compatibility<select className="auth-input" value={compatibilityMode} onChange={(event) => setCompatibilityMode(event.target.value === "strict" ? "strict" : "suggested")}><option value="suggested">Suggested — show everyone, prioritize my preferences</option><option value="strict">Strict — only show mutually compatible profiles</option></select></label>
           <span className="field-label">My interests</span><div className="interest-picker">{["Food & coffee","Live music","Outdoors","Books & art","Things to do tonight"].map(item => <button type="button" className={interests.includes(item) ? "selected" : ""} key={item} onClick={() => setInterests(current => current.includes(item) ? current.filter(value => value !== item) : [...current, item])}>{item}</button>)}</div>
           <label className="adult-check visibility-check"><input type="checkbox" checked={discoverable} onChange={(event) => setDiscoverable(event.target.checked)} /><span><strong>Show my bubble in rooms</strong><small>Only verified members can open it. Turn this off anytime to step out of view.</small></span></label>
           <button className="primary full" onClick={updateProfile} disabled={username.length < 3 || !broadArea || interests.length === 0 || authBusy}>{authBusy ? "Saving…" : "Save my profile"} <span>→</span></button>
           {authMessage && <p className="auth-message" role="status">{authMessage}</p>}<button className="signout-button" onClick={signOut}>Sign out</button>
         </> : modal === "messages" ? <>
-          <div className="modal-mark">↗</div><p className="eyebrow">INTRODUCTIONS</p><h2>Your conversations start here.</h2>{introductions.length ? <div className="introduction-inbox">{introductions.map(item => <article key={item.id}><div className="introduction-head"><strong>{item.incoming ? "From" : "To"} {item.personName}</strong><span className={`intro-state ${item.state}`}>{item.state}</span></div><p>{item.message}</p><small>{new Date(item.created_at).toLocaleString([], { month:"short", day:"numeric", hour:"numeric", minute:"2-digit" })}</small>{item.incoming && item.state === "pending" && <div className="introduction-actions"><button onClick={() => respondToIntroduction(item.id,"accepted")} disabled={authBusy}>Accept</button><button onClick={() => respondToIntroduction(item.id,"passed")} disabled={authBusy}>Pass</button><button onClick={() => respondToIntroduction(item.id,"reported")} disabled={authBusy}>Report</button></div>}</article>)}</div> : <div className="empty-messages"><div>✦</div><strong>No introductions yet</strong><p>Open a member’s bubble and send a thoughtful hello. Replies and incoming introductions will appear here.</p></div>}{authMessage && <p className="auth-message" role="status">{authMessage}</p>}<button className="primary full" onClick={() => { setModal(null); document.getElementById("room")?.scrollIntoView(); }}>Return to the room <span>→</span></button>
+          <div className="modal-mark">↗</div><p className="eyebrow">MESSAGES</p><h2>Your conversations.</h2>{conversations.length > 0 && <div className="conversation-list">{conversations.map(item => <button key={item.id} onClick={() => void openConversation(item)}><span><strong>{item.otherName}</strong><small>{item.preview}</small></span>{item.unread > 0 && <b>{item.unread}</b>}</button>)}</div>}<p className="eyebrow inbox-divider">INTRODUCTIONS</p>{introductions.length ? <div className="introduction-inbox">{introductions.map(item => <article key={item.id}><div className="introduction-head"><strong>{item.incoming ? "From" : "To"} {item.personName}</strong><span className={`intro-state ${item.state}`}>{item.state}</span></div><p>{item.message}</p><small>{new Date(item.created_at).toLocaleString([], { month:"short", day:"numeric", hour:"numeric", minute:"2-digit" })}</small>{item.incoming && item.state === "pending" && <div className="introduction-actions"><button onClick={() => respondToIntroduction(item.id,"accepted")} disabled={authBusy}>Accept</button><button onClick={() => respondToIntroduction(item.id,"passed")} disabled={authBusy}>Pass</button><button onClick={() => respondToIntroduction(item.id,"reported")} disabled={authBusy}>Report</button></div>}</article>)}</div> : <div className="empty-messages"><div>✦</div><strong>No introductions yet</strong><p>Open a member’s bubble and send a thoughtful hello. An accepted introduction becomes a private conversation.</p></div>}{authMessage && <p className="auth-message" role="status">{authMessage}</p>}<button className="primary full" onClick={() => { setModal(null); document.getElementById("room")?.scrollIntoView(); }}>Return to the room <span>→</span></button>
+        </> : modal === "chat" ? <>
+          <p className="eyebrow">PRIVATE CONVERSATION</p><h2>{selectedConversation?.otherName}</h2><div className="chat-safety"><button onClick={reportChatMember}>Report</button><button onClick={blockChatMember}>Block & remove</button></div><div className="chat-thread">{directMessages.length ? directMessages.map(message => <article className={message.sender_id === userId ? "mine" : "theirs"} key={message.id}><p>{message.body}</p><small>{new Date(message.created_at).toLocaleString([], {hour:"numeric",minute:"2-digit"})}</small></article>) : <p className="chat-empty">You both accepted the introduction. Start the conversation when you’re ready.</p>}</div><textarea value={messageText} onChange={(event) => setMessageText(event.target.value.slice(0,1000))} placeholder="Write a message…" aria-label="Private message"/><p className="character-note">{messageText.length}/1000 · Keep personal contact details private until trust is earned.</p><button className="primary full" onClick={sendDirectMessage} disabled={!messageText.trim() || authBusy}>{authBusy ? "Sending…" : "Send message"} <span>→</span></button>{authMessage && <p className="auth-message" role="status">{authMessage}</p>}<button className="signout-button" onClick={() => setModal("messages")}>Back to messages</button>
+        </> : modal === "admin" ? <>
+          <div className="modal-mark">✓</div><p className="eyebrow">OWNER ONLY</p><h2>Verification & safety.</h2><p className="admin-privacy-note">Birthdates are displayed only here for adult-verification review. They are never placed on member profiles.</p><p className="eyebrow inbox-divider">AGE VERIFICATION</p><div className="admin-review-list">{verificationReviews.map(item => <article key={item.user_id}><div><strong>{item.username}</strong><small>{item.birth_date ? `Birth date: ${new Date(`${item.birth_date}T12:00:00`).toLocaleDateString()}` : "No birth date supplied"} · {item.status} · account {item.accountState}</small></div><div><button onClick={() => reviewVerification(item.user_id,"verified")} disabled={authBusy}>Approve 18+</button><button onClick={() => reviewVerification(item.user_id,"failed")} disabled={authBusy}>Reject</button><button onClick={() => setAccountState(item.user_id,"paused")}>Suspend</button><button onClick={() => setAccountState(item.user_id,"active")}>Restore</button><button onClick={() => setAccountState(item.user_id,"banned")}>Ban</button></div></article>)}</div><p className="eyebrow inbox-divider">SAFETY REPORTS</p>{safetyReports.length ? <div className="admin-review-list">{safetyReports.map(report => <article key={report.id}><div><strong>{report.status}</strong><p>{report.reason}</p><small>{new Date(report.created_at).toLocaleString()}</small></div><div><button onClick={() => reviewReport(report.id,"reviewed")}>Reviewed</button><button onClick={() => reviewReport(report.id,"actioned")}>Actioned</button><button onClick={() => reviewReport(report.id,"dismissed")}>Dismiss</button></div></article>)}</div> : <p>No safety reports are waiting.</p>}{authMessage && <p className="auth-message" role="status">{authMessage}</p>}
         </> : modal === "invite" ? <>
           <div className="modal-mark">＋</div><p className="eyebrow">OPEN INVITATION</p><h2>What sounds good?</h2><p>Post a short plan for people who are online now. It automatically disappears after 24 hours.</p>
           <label className="field-label">Interest room<select className="auth-input" value={inviteRoom} onChange={(event) => setInviteRoom(event.target.value)}>{rooms.map(room => <option key={room.name}>{room.name}</option>)}</select></label>
