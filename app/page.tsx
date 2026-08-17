@@ -47,15 +47,16 @@ export default function Home() {
   const [verified, setVerified] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
   const [profileReady, setProfileReady] = useState(false);
-  const [modal, setModal] = useState<"verify" | "onboarding" | "profile" | "hello" | "invite" | "messages" | "chat" | "filters" | "admin" | null>(null);
+  const [modal, setModal] = useState<"verify" | "onboarding" | "profile" | "hello" | "invite" | "messages" | "chat" | "filters" | "admin" | "account" | null>(null);
   const [selected, setSelected] = useState<RoomPerson | null>(null);
   const [sent, setSent] = useState(false);
   const [introductionText, setIntroductionText] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
+  const [authMode, setAuthMode] = useState<"signin" | "signup" | "forgot" | "recovery">("signin");
   const [authMessage, setAuthMessage] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
   const [username, setUsername] = useState("");
   const [broadArea, setBroadArea] = useState("");
   const [birthDate, setBirthDate] = useState("");
@@ -140,7 +141,7 @@ export default function Home() {
       setModal(profile ? null : "onboarding");
     };
     supabase.auth.getSession().then(({ data }) => void refreshAccess(data.session?.user.id));
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => { window.setTimeout(() => void refreshAccess(session?.user.id), 0); });
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => { if (event === "PASSWORD_RECOVERY") { setAuthMode("recovery"); setModal("verify"); } window.setTimeout(() => void refreshAccess(session?.user.id), 0); });
     return () => listener.subscription.unsubscribe();
   }, []);
 
@@ -264,9 +265,17 @@ export default function Home() {
 
   const enter = () => setModal("verify");
   const submitAuth = async () => {
-    if (!supabase || !email || password.length < 8) return;
+    if (!supabase || (authMode !== "recovery" && !email) || (authMode !== "forgot" && password.length < 8)) return;
     setAuthBusy(true);
     setAuthMessage("");
+    if (authMode === "forgot") {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo:`${window.location.origin}/` });
+      setAuthBusy(false); setAuthMessage(error?.message ?? "Password-reset email sent. Open its link on this device."); return;
+    }
+    if (authMode === "recovery") {
+      const { error } = await supabase.auth.updateUser({password}); setAuthBusy(false);
+      if (error) return setAuthMessage(error.message); setAuthMessage("Password updated. You can continue into Meet Freely."); setAuthMode("signin"); return;
+    }
     const { data, error } = authMode === "signup"
       ? await supabase.auth.signUp({ email, password, options: { emailRedirectTo: `${window.location.origin}/` } })
       : await supabase.auth.signInWithPassword({ email, password });
@@ -298,6 +307,17 @@ export default function Home() {
     setMyAge(age); setProfileReady(true); setVerificationStatus("pending"); setAuthMessage("");
   };
   const signOut = async () => { await supabase?.auth.signOut(); setSignedIn(false); setVerified(false); setProfileReady(false); setModal(null); };
+  const pauseAccount = async () => {
+    if (!supabase || !userId) return; setAuthBusy(true);
+    const [{error:a}] = await Promise.all([supabase.from("profiles").update({discoverable:false}).eq("user_id",userId), supabase.from("room_members").update({state:"left"}).eq("user_id",userId)]);
+    setDiscoverable(false); setAuthBusy(false); setAuthMessage(a?.message ?? "Your bubble is hidden. Sign back in and enable room visibility whenever you’re ready.");
+  };
+  const deleteAccount = async () => {
+    if (!supabase || deleteConfirmation !== "DELETE") return; setAuthBusy(true); setAuthMessage("");
+    const { error } = await supabase.functions.invoke("delete-account", {body:{confirmation:"DELETE"}});
+    if (error) { setAuthBusy(false); return setAuthMessage(error.message); }
+    window.localStorage.removeItem("meet-freely-pins"); await supabase.auth.signOut(); setAuthBusy(false); setSignedIn(false); setVerified(false); setProfileReady(false); setModal(null);
+  };
   const updateProfile = async () => {
     if (!supabase || username.length < 3 || !broadArea || interests.length === 0) return;
     setAuthBusy(true); setAuthMessage("");
@@ -418,7 +438,7 @@ export default function Home() {
   };
   const primaryPhoto = photos.find(photo => photo.is_primary) ?? photos[0];
   const activeRoomDetails = rooms.find(room => room.name === activeRoom) ?? rooms[2];
-  const roomCandidates = roomPeople.length ? roomPeople : people;
+  const roomCandidates = verified ? roomPeople : people;
   const visiblePeople = roomCandidates.filter(person => {
     if (compatibilityMode === "strict" && !person.sample) {
       if (person.age !== null && (person.age < preferredMinAge || person.age > preferredMaxAge)) return false;
@@ -435,7 +455,6 @@ export default function Home() {
   });
   const activeFilterCount = Number(filterMinAge > 18 || filterMaxAge < 99) + Number(Boolean(filterIntention)) + Number(Boolean(filterGender)) + Number(Boolean(filterArea)) + Number(filterOnlineOnly);
   const visibleRoomCount = roomMemberCount || activeRoomDetails.count;
-  const unreadTotal = conversations.reduce((total, conversation) => total + conversation.unread, 0);
   const openMyProfile = () => { setAuthMessage(""); setModal("profile"); };
 
   if (!browserReady) {
@@ -451,7 +470,7 @@ export default function Home() {
           <div className="mobile-bubble-field" style={{ transform: `translate(${roomOffset.x}px, ${roomOffset.y}px)` }}>
           <button className="mobile-own-bubble" onClick={openMyProfile}><span className="bubble-photo">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your primary profile" /> : username.slice(0, 2).toUpperCase() || "ME"}</span><strong>{username || "Your bubble"}</strong><small>You · tap to edit</small><span className="presence"><i />Here now</span></button>
           {visiblePeople.filter(person => !hiddenPeople.includes(person.name)).map((person, index) => <div role="button" tabIndex={0} key={person.id ?? person.name} className={`mobile-member-bubble mobile-bubble-${index + 1} ${person.tone} ${person.online ? "is-online" : "is-offline"} ${pinnedPeople.includes(person.name) ? "is-pinned" : ""}`} onClick={() => { if (!swipeMoved.current) hello(person); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") hello(person); }}><button className="bubble-pin" onClick={(event) => { event.stopPropagation(); setPinnedPeople(current => current.includes(person.name) ? current.filter(name => name !== person.name) : [...current, person.name]); }} aria-label={pinnedPeople.includes(person.name) ? `Unpin ${person.name}` : `Pin ${person.name}`}>{pinnedPeople.includes(person.name) ? "●" : "⌖"}</button><span className={`bubble-photo ${person.sample ? "sample-photo" : ""}`} style={person.photoUrl ? undefined : {backgroundPosition:person.photoPosition}}>{person.photoUrl ? <img src={person.photoUrl} alt={`${person.name} profile`} /> : person.sample ? "" : person.initials}</span><strong>{person.name}</strong><small>{person.age ? `${person.age} · ` : ""}{person.area}</small><span className="presence"><i />{person.online ? "Here now" : "Away"}</span></div>)}
-          </div>{visiblePeople.length === 0 && <button className="room-filter-empty" onClick={() => setModal("filters")}><strong>No bubbles fit yet</strong><small>Adjust your room filters</small></button>}{swipeHintVisible && <span className="swipe-hint">Swipe the room to explore farther</span>}
+          </div>{verified && roomPeople.length === 0 && !roomLoading ? <div className="room-filter-empty honest-empty"><strong>You’re first in this room right now</strong><small>Try another interest room or invite a trusted beta member. We never fill member rooms with fake profiles.</small></div> : visiblePeople.length === 0 && <button className="room-filter-empty" onClick={() => setModal("filters")}><strong>No bubbles fit your filters</strong><small>Adjust your room filters</small></button>}{swipeHintVisible && roomPeople.length > 0 && <span className="swipe-hint">Swipe the room to explore farther</span>}
           <button className="mobile-invite-action" onClick={() => { setAuthMessage(""); setModal("invite"); }}>＋ <span>Post an invitation</span></button>
           <button className="mobile-filter-action" onClick={() => setModal("filters")}>☷ Filters{activeFilterCount ? ` · ${activeFilterCount}` : ""}</button>
         </div>
@@ -501,7 +520,7 @@ export default function Home() {
         <div className="section-heading"><div><p className="eyebrow"><span className="live-dot" /> {activeRoom.toUpperCase()} ROOM</p><h2>Everyone here shares an interest.</h2><p className="desktop-room-count">{roomLoading ? "Opening the live room…" : `${visiblePeople.length} shown · ${visibleRoomCount} here recently · broad areas only`}</p></div><div className="filters"><button className={activeFilterCount ? "active-filter" : ""} onClick={() => setModal("filters")}>Filters{activeFilterCount ? ` (${activeFilterCount})` : ""}</button><button onClick={() => document.getElementById("invites")?.scrollIntoView({behavior:"smooth"})}>Open invitations</button><button onClick={() => setModal("messages")}>Messages</button></div></div>
         <div className={`bubble-room ${!verified ? "visitor-room" : ""}`}>
           {visiblePeople.filter(person => !hiddenPeople.includes(person.name)).map((person, index) => (
-            <div role="button" tabIndex={0} draggable className={`member-bubble room-bubble bubble-${index + 1} ${person.tone} ${person.online ? "is-online" : "is-offline"} ${pinnedPeople.includes(person.name) ? "is-pinned" : ""}`} key={person.id ?? person.name} onDragStart={() => setDraggingPerson(person.name)} onDragEnd={() => setDraggingPerson(null)} onClick={() => verified ? hello(person) : enter()} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") verified ? hello(person) : enter(); }} aria-label={verified ? `Open ${person.name} profile` : "Verify to meet people in this room"}>
+            <div role="button" tabIndex={0} draggable className={`member-bubble room-bubble bubble-${index + 1} ${person.tone} ${person.online ? "is-online" : "is-offline"} ${pinnedPeople.includes(person.name) ? "is-pinned" : ""}`} key={person.id ?? person.name} onDragStart={() => setDraggingPerson(person.name)} onDragEnd={() => setDraggingPerson(null)} onClick={() => verified ? hello(person) : enter()} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { if (verified) hello(person); else enter(); } }} aria-label={verified ? `Open ${person.name} profile` : "Verify to meet people in this room"}>
               {verified && <button className="desktop-bubble-pin" onClick={(event) => { event.stopPropagation(); setPinnedPeople(current => current.includes(person.name) ? current.filter(name => name !== person.name) : [...current, person.name]); }} aria-label={pinnedPeople.includes(person.name) ? `Unpin ${person.name}` : `Pin ${person.name}`}>{pinnedPeople.includes(person.name) ? "●" : "⌖"}</button>}
               <span className="bubble-shine" />
               <span className={`bubble-photo ${verified && person.sample ? "sample-photo" : ""}`} style={verified && !person.photoUrl ? {backgroundPosition:person.photoPosition} : undefined}>{verified ? person.photoUrl ? <img src={person.photoUrl} alt={`${person.name} profile`} /> : person.sample ? "" : person.initials : "•"}</span>
@@ -511,6 +530,7 @@ export default function Home() {
             </div>
           ))}
           {verified ? <button className="desktop-own-bubble" onClick={openMyProfile}><span className="bubble-photo">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your primary profile" /> : username.slice(0,2).toUpperCase() || "ME"}</span><strong>{username || "Your bubble"}</strong><small>You · tap to edit</small><span className="presence"><i />Here now</span></button> : <div className="room-center"><span>{activeRoom.toUpperCase()}</span><strong>{visibleRoomCount} nearby</strong><small>Verify to see and meet everyone in this room.</small></div>}
+          {verified && roomPeople.length === 0 && !roomLoading && <div className="desktop-honest-empty"><strong>You’re first here right now.</strong><small>No sample members are shown inside real member rooms.</small></div>}
           <div className={`block-dock ${draggingPerson ? "is-ready" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={hideDraggedPerson}><span>×</span><strong>Hide & block</strong><small>Drag someone here for mutual invisibility</small></div>
           {hiddenPeople.length > 0 && <button className="undo-hide" onClick={() => setHiddenPeople(current => current.slice(0, -1))}>Undo last hide</button>}
         </div>
@@ -540,17 +560,18 @@ export default function Home() {
         <div className="price-card"><span>Verified membership</span><strong><sup>$</sup>2.99<small>/month</small></strong><ul><li>See everyone in your rooms</li><li>Send and receive introductions</li><li>See every like—immediately</li><li>No ads, boosts, or visibility tiers</li></ul><button className="primary dark" onClick={enter}>Join the room <span>→</span></button><small>Cancel anytime. No surprise upgrades.</small></div>
       </section>
 
-      <footer><a className="brand" href="#top"><span className="brand-dot">●</span> meet freely</a><p>Meet freely. No match required.</p><div><a href="#safety">Safety</a><a href="#">Community rules</a><a href="#">Privacy</a></div></footer>
+      <footer><a className="brand" href="#top"><span className="brand-dot">●</span> meet freely</a><p>Meet freely. No match required.</p><div><a href="/safety">Safety Center</a><a href="/community-guidelines">Community Guidelines</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div></footer>
 
       {modal && <div className="modal-backdrop" onMouseDown={() => setModal(null)}><div className="modal" onMouseDown={e => e.stopPropagation()} role="dialog" aria-modal="true">
         <button className="close" onClick={() => setModal(null)} aria-label="Close">×</button>
         {modal === "verify" ? <>
-          <div className="modal-mark">✓</div><p className="eyebrow">PRIVATE ACCOUNT</p><h2>{authMode === "signin" ? "Welcome back." : "Join the room."}</h2><p>Use your email and password. Your email and legal identity are never shown on your dating profile.</p>
-          <div className="auth-tabs"><button className={authMode === "signin" ? "active" : ""} onClick={() => { setAuthMode("signin"); setAuthMessage(""); }}>Sign in</button><button className={authMode === "signup" ? "active" : ""} onClick={() => { setAuthMode("signup"); setAuthMessage(""); }}>Create account</button></div>
-          <input className="auth-input" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" aria-label="Email address" />
-          <input className="auth-input" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" aria-label="Password" />
-          <button className="primary full" onClick={submitAuth} disabled={!email || password.length < 8 || authBusy || !isSupabaseConfigured}>{authBusy ? "Working…" : authMode === "signin" ? "Sign in" : "Create my private account"} <span>→</span></button>
-          {authMessage && <p className="auth-message" role="status">{authMessage}</p>}<small className="modal-foot">New accounts receive one confirmation email. Profile access still requires adult verification and active membership.</small>
+          <div className="modal-mark">✓</div><p className="eyebrow">PRIVATE ACCOUNT</p><h2>{authMode === "signin" ? "Welcome back." : authMode === "signup" ? "Join the room." : authMode === "forgot" ? "Reset your password." : "Choose a new password."}</h2><p>{authMode === "forgot" ? "We’ll email you a private reset link." : authMode === "recovery" ? "Enter a new password with at least eight characters." : "Use your email and password. Your email and legal identity are never shown on your dating profile."}</p>
+          {authMode !== "recovery" && <div className="auth-tabs"><button className={authMode === "signin" ? "active" : ""} onClick={() => { setAuthMode("signin"); setAuthMessage(""); }}>Sign in</button><button className={authMode === "signup" ? "active" : ""} onClick={() => { setAuthMode("signup"); setAuthMessage(""); }}>Create account</button></div>}
+          {authMode !== "recovery" && <input className="auth-input" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" aria-label="Email address" />}
+          {authMode !== "forgot" && <input className="auth-input" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" aria-label="Password" />}
+          <button className="primary full" onClick={submitAuth} disabled={(authMode !== "recovery" && !email) || (authMode !== "forgot" && password.length < 8) || authBusy || !isSupabaseConfigured}>{authBusy ? "Working…" : authMode === "signin" ? "Sign in" : authMode === "signup" ? "Create my private account" : authMode === "forgot" ? "Email my reset link" : "Save new password"} <span>→</span></button>
+          {authMode === "signin" && <button className="signout-button" onClick={() => {setAuthMode("forgot");setAuthMessage("");}}>Forgot password?</button>}{(authMode === "forgot" || authMode === "recovery") && <button className="signout-button" onClick={() => {setAuthMode("signin");setAuthMessage("");}}>Back to sign in</button>}
+          {authMode === "signup" && <small className="modal-foot">By creating an account, you agree to the <a href="/terms">Terms</a>, <a href="/privacy">Privacy Policy</a>, and <a href="/community-guidelines">Community Guidelines</a>.</small>}{authMessage && <p className="auth-message" role="status">{authMessage}</p>}<small className="modal-foot">New accounts receive one confirmation email. Profile access still requires adult verification and active membership.</small>
         </> : modal === "onboarding" ? <>
           <div className="modal-mark">✓</div><p className="eyebrow">{profileReady ? "ACCOUNT STATUS" : "PRIVATE PROFILE"}</p><h2>{profileReady ? "Your place is saved." : "Make your bubble yours."}</h2>
           {profileReady ? <><div className="account-progress"><span className="done">✓ Email confirmed</span><span className="done">✓ Private profile created</span><span className={verificationStatus === "verified" ? "done" : "current"}>{verificationStatus === "verified" ? "✓" : "3"} Adult verification {verificationStatus}</span><span>4 Membership activation</span></div><p>Your profile remains invisible until adult verification and membership are active. Unverified visitors cannot view it while you wait.</p><button className="primary full" onClick={() => setModal(null)}>Return to Meet Freely <span>→</span></button><button className="signout-button" onClick={signOut}>Sign out</button></> : <><p>Use a username—not your surname or social handle. Only your broad area is shown.</p><input className="auth-input" value={username} onChange={(event) => setUsername(event.target.value.replace(/[^A-Za-z0-9_]/g, "").slice(0, 24))} placeholder="Private username" aria-label="Private username" /><input className="auth-input" value={broadArea} onChange={(event) => setBroadArea(event.target.value.slice(0, 80))} placeholder="Broad area, e.g. West side" aria-label="Broad area" /><label className="field-label">Date of birth<input className="auth-input" type="date" value={birthDate} onChange={(event) => setBirthDate(event.target.value)} /></label><div className="interest-picker">{["Food & coffee","Live music","Outdoors","Books & art","Things to do tonight"].map(item => <button type="button" className={interests.includes(item) ? "selected" : ""} key={item} onClick={() => setInterests(current => current.includes(item) ? current.filter(value => value !== item) : [...current, item])}>{item}</button>)}</div><label className="adult-check"><input type="checkbox" checked={adultConfirmed} onChange={(event) => setAdultConfirmed(event.target.checked)} /> I confirm this birth date is mine and I am at least 18 years old.</label><button className="primary full" onClick={saveProfile} disabled={!adultConfirmed || username.length < 3 || !broadArea || !birthDate || interests.length === 0 || authBusy}>{authBusy ? "Saving…" : "Submit for verification"} <span>→</span></button>{authMessage && <p className="auth-message" role="status">{authMessage}</p>}<small className="modal-foot">Your birth date is private and is never placed on your dating profile.</small></>}
@@ -579,7 +600,9 @@ export default function Home() {
           <span className="field-label">My interests</span><div className="interest-picker">{["Food & coffee","Live music","Outdoors","Books & art","Things to do tonight"].map(item => <button type="button" className={interests.includes(item) ? "selected" : ""} key={item} onClick={() => setInterests(current => current.includes(item) ? current.filter(value => value !== item) : [...current, item])}>{item}</button>)}</div>
           <label className="adult-check visibility-check"><input type="checkbox" checked={discoverable} onChange={(event) => setDiscoverable(event.target.checked)} /><span><strong>Show my bubble in rooms</strong><small>Only verified members can open it. Turn this off anytime to step out of view.</small></span></label>
           <button className="primary full" onClick={updateProfile} disabled={username.length < 3 || !broadArea || interests.length === 0 || authBusy}>{authBusy ? "Saving…" : "Save my profile"} <span>→</span></button>
-          {authMessage && <p className="auth-message" role="status">{authMessage}</p>}<button className="signout-button" onClick={signOut}>Sign out</button>
+          {authMessage && <p className="auth-message" role="status">{authMessage}</p>}<button className="signout-button" onClick={() => {setAuthMessage("");setDeleteConfirmation("");setModal("account");}}>Manage or delete account</button><button className="signout-button" onClick={signOut}>Sign out</button>
+        </> : modal === "account" ? <>
+          <div className="modal-mark">○</div><p className="eyebrow">ACCOUNT CONTROL</p><h2>Your account, your choice.</h2><p>Pause your bubble without losing your profile, or permanently delete your account and associated Meet Freely data.</p><button className="primary full" onClick={pauseAccount} disabled={authBusy}>Pause and hide my bubble</button>{authMessage && <p className="auth-message" role="status">{authMessage}</p>}<div className="danger-zone"><strong>Permanently delete account</strong><p>This cannot be undone. Your profile, photos, room activity, introductions, messages, blocks, and reports associated with your account will be removed according to our retention obligations.</p><label className="field-label">Type DELETE to confirm<input className="auth-input" value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value.toUpperCase())} /></label><button className="delete-account-button" onClick={deleteAccount} disabled={deleteConfirmation !== "DELETE" || authBusy}>{authBusy ? "Deleting…" : "Delete my account permanently"}</button></div><button className="signout-button" onClick={() => setModal("profile")}>Back to profile</button>
         </> : modal === "messages" ? <>
           <div className="modal-mark">↗</div><p className="eyebrow">MESSAGES</p><h2>Your conversations.</h2>{conversations.length > 0 && <div className="conversation-list">{conversations.map(item => <button key={item.id} onClick={() => void openConversation(item)}><span><strong>{item.otherName}</strong><small>{item.preview}</small></span>{item.unread > 0 && <b>{item.unread}</b>}</button>)}</div>}<p className="eyebrow inbox-divider">INTRODUCTIONS</p>{introductions.length ? <div className="introduction-inbox">{introductions.map(item => <article key={item.id}><div className="introduction-head"><strong>{item.incoming ? "From" : "To"} {item.personName}</strong><span className={`intro-state ${item.state}`}>{item.state}</span></div><p>{item.message}</p><small>{new Date(item.created_at).toLocaleString([], { month:"short", day:"numeric", hour:"numeric", minute:"2-digit" })}</small>{item.incoming && item.state === "pending" && <div className="introduction-actions"><button onClick={() => respondToIntroduction(item.id,"accepted")} disabled={authBusy}>Accept</button><button onClick={() => respondToIntroduction(item.id,"passed")} disabled={authBusy}>Pass</button><button onClick={() => respondToIntroduction(item.id,"reported")} disabled={authBusy}>Report</button></div>}</article>)}</div> : <div className="empty-messages"><div>✦</div><strong>No introductions yet</strong><p>Open a member’s bubble and send a thoughtful hello. An accepted introduction becomes a private conversation.</p></div>}{authMessage && <p className="auth-message" role="status">{authMessage}</p>}<button className="primary full" onClick={() => { setModal(null); document.getElementById("room")?.scrollIntoView(); }}>Return to the room <span>→</span></button>
         </> : modal === "chat" ? <>
