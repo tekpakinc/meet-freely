@@ -87,6 +87,18 @@ or enforce explicit server-side membership or allowlist checks.
 Use SIWC for account pages, user-specific dashboards, saved records, and write
 actions tied to the current ChatGPT user. Leave public content anonymous.
 
+## Stripe Membership
+
+Meet Freely uses Stripe Checkout for the $2.99 monthly membership, Stripe's hosted Customer Portal for billing changes, and a signed Supabase Edge Function webhook as the sole authority for `accounts.membership_active`.
+
+Required Supabase Edge Function secrets:
+
+- `STRIPE_SECRET_KEY` — a live restricted or secret key with Customers, Checkout Sessions, Billing Portal Sessions, Subscriptions, and Prices access
+- `STRIPE_PRICE_ID` — the live recurring $2.99/month Price ID
+- `STRIPE_WEBHOOK_SECRET` — the signing secret for the Meet Freely webhook endpoint
+
+The webhook listens for Checkout completion, subscription lifecycle, and invoice payment events. Never place these secrets in `.env.local`, the Sites environment, or client code.
+
 ## Useful Commands
 
 - `npm run dev`: start local development
