@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 async function render(path = "/") {
@@ -14,7 +15,16 @@ test("renders the Meet Freely public entry", async () => {
   const html = await response.text();
   assert.match(html, /Meet Freely/i);
   assert.match(html, /Dating Without Swiping/i);
+  assert.doesNotMatch(html, /86 people|86 here recently|SoftLaunch/i);
   assert.doesNotMatch(html, /Your site is taking shape|codex-preview/i);
+});
+
+test("ships honest room and membership copy", async () => {
+  const source = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  assert.match(source, /EXAMPLE ROOM PREVIEW/i);
+  assert.match(source, /Room conversation/i);
+  assert.match(source, /2\.99/);
+  assert.doesNotMatch(source, /86 people|86 here recently|SoftLaunch/i);
 });
 
 for (const [path,title] of [["/privacy","Privacy Policy"],["/terms","Terms of Service"],["/community-guidelines","Community Guidelines"],["/safety","Safety Center"]]) {

@@ -9,6 +9,7 @@ type RoomPerson = { id?: string; name: string; age: number | null; area: string;
 type InvitationItem = { id: string; body: string; broad_area: string | null; created_at: string; expires_at: string; author: RoomPerson; roomName: string };
 type IntroductionItem = { id: string; sender_id: string; recipient_id: string; message: string; state: "pending" | "accepted" | "passed" | "reported"; created_at: string; personName: string; incoming: boolean };
 type DirectMessage = { id: string; conversation_id: string; sender_id: string; recipient_id: string; body: string; read_at: string | null; created_at: string };
+type RoomChatMessage = { id: string; room_id: string; sender_id: string; body: string; created_at: string; senderName: string };
 type ConversationItem = { id: string; member_a: string; member_b: string; otherId: string; otherName: string; last_message_at: string; unread: number; preview: string };
 type VerificationReview = { user_id: string; username: string; birth_date: string | null; status: string; submitted_at: string | null; accountState: string };
 type SafetyReport = { id: string; reporter_id: string; reported_id: string; reason: string; status: string; created_at: string };
@@ -23,21 +24,31 @@ async function prepareProfilePhoto(file: File) {
   return await new Promise<Blob>((resolve, reject) => canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("We couldn’t prepare that photo.")), "image/jpeg", .84));
 }
 
+function friendlyError(error: unknown, fallback = "Something went wrong. Please try again.") {
+  const message = error instanceof Error ? error.message : typeof error === "object" && error && "message" in error ? String(error.message) : "";
+  const normalized = message.toLowerCase();
+  if (normalized.includes("row-level security") || normalized.includes("permission denied")) return "Your session no longer has permission to do that. Please sign out, sign back in, and try once more.";
+  if (normalized.includes("duplicate") || normalized.includes("unique constraint")) return "That has already been submitted.";
+  if (normalized.includes("rate") || normalized.includes("too many") || normalized.includes("slow down")) return "You’re moving a little quickly. Please wait a moment and try again.";
+  if (normalized.includes("jwt") || normalized.includes("session") || normalized.includes("unauthorized")) return "Your secure session expired. Please sign in again.";
+  return message || fallback;
+}
+
 const people: RoomPerson[] = [
   { name: "CityFern", age: 31, area: "West side", note: "Museum afternoons, tiny restaurants, and laughing too loudly.", tags: ["Long-term", "Art", "Food"], initials: "CF", photoPosition: "0% 0%", tone: "coral", online: true, sample: true },
   { name: "MilesAhead", age: 34, area: "North side", note: "Weekend cyclist. Weeknight cook. Looking for something steady.", tags: ["Long-term", "Outdoors", "Cooking"], initials: "MA", photoPosition: "50% 0%", tone: "sky", online: true, sample: true },
   { name: "SundayStatic", age: 29, area: "Center city", note: "Live music, used bookstores, and a very opinionated rescue dog.", tags: ["Dating", "Music", "Dogs"], initials: "SS", photoPosition: "100% 0%", tone: "gold", online: true, sample: true },
-  { name: "SoftLaunch", age: 36, area: "East side", note: "Architect, amateur potter, professional finder of good coffee.", tags: ["Relationship", "Design", "Coffee"], initials: "SL", photoPosition: "0% 100%", tone: "plum", online: true, sample: true },
+  { name: "ClayAndCoffee", age: 36, area: "East side", note: "Architect, amateur potter, professional finder of good coffee.", tags: ["Relationship", "Design", "Coffee"], initials: "CC", photoPosition: "0% 100%", tone: "plum", online: true, sample: true },
   { name: "JuniperJune", age: 32, area: "South side", note: "Equal parts homebody and last-minute road trip.", tags: ["Dating", "Travel", "Books"], initials: "JJ", photoPosition: "50% 100%", tone: "mint", online: false, sample: true },
   { name: "HeyItsRae", age: 30, area: "Within 10 miles", note: "Sunday brunch host. Terrible at trivia. Excellent teammate.", tags: ["Long-term", "Friends first", "Brunch"], initials: "HR", photoPosition: "100% 100%", tone: "rose", online: false, sample: true },
 ];
 
 const rooms = [
-  { name: "Things to do tonight", icon: "✦", count: 18, color: "#ffb8d0" },
-  { name: "Live music", icon: "♫", count: 12, color: "#bca9ff" },
-  { name: "Food & coffee", icon: "☕", count: 21, color: "#edcf78" },
-  { name: "Outdoors", icon: "☀", count: 9, color: "#91e7dc" },
-  { name: "Books & art", icon: "◌", count: 14, color: "#f5b49f" },
+  { name: "Things to do tonight", icon: "✦", color: "#ffb8d0" },
+  { name: "Live music", icon: "♫", color: "#bca9ff" },
+  { name: "Food & coffee", icon: "☕", color: "#edcf78" },
+  { name: "Outdoors", icon: "☀", color: "#91e7dc" },
+  { name: "Books & art", icon: "◌", color: "#f5b49f" },
 ];
 
 const genderOptions = ["Woman", "Man", "Nonbinary", "Genderfluid", "Agender", "Self-described"];
@@ -50,7 +61,7 @@ export default function Home() {
   const [hasBillingAccount, setHasBillingAccount] = useState(false);
   const [signedIn, setSignedIn] = useState(false);
   const [profileReady, setProfileReady] = useState(false);
-  const [modal, setModal] = useState<"verify" | "onboarding" | "profile" | "hello" | "invite" | "messages" | "chat" | "filters" | "admin" | "account" | null>(null);
+  const [modal, setModal] = useState<"verify" | "onboarding" | "profile" | "hello" | "invite" | "messages" | "chat" | "roomchat" | "report" | "filters" | "admin" | "account" | null>(null);
   const [selected, setSelected] = useState<RoomPerson | null>(null);
   const [sent, setSent] = useState(false);
   const [introductionText, setIntroductionText] = useState("");
@@ -84,6 +95,7 @@ export default function Home() {
   const [installHelpOpen, setInstallHelpOpen] = useState(false);
   const [pinnedPeople, setPinnedPeople] = useState<string[]>([]);
   const [locationReady, setLocationReady] = useState(false);
+  const [nearbyOrder, setNearbyOrder] = useState<string[]>([]);
   const [roomOffset, setRoomOffset] = useState({ x: 0, y: 0 });
   const swipeStart = useRef<{ x: number; y: number } | null>(null);
   const swipeMoved = useRef(false);
@@ -94,6 +106,10 @@ export default function Home() {
   const [userId, setUserId] = useState<string | null>(null);
   const [roomPeople, setRoomPeople] = useState<RoomPerson[]>([]);
   const [roomMemberCount, setRoomMemberCount] = useState(0);
+  const [roomCounts, setRoomCounts] = useState<Record<string, number>>({});
+  const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
+  const [roomMessages, setRoomMessages] = useState<RoomChatMessage[]>([]);
+  const [roomMessageText, setRoomMessageText] = useState("");
   const [roomLoading, setRoomLoading] = useState(false);
   const [invitations, setInvitations] = useState<InvitationItem[]>([]);
   const [introductions, setIntroductions] = useState<IntroductionItem[]>([]);
@@ -111,6 +127,9 @@ export default function Home() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [verificationReviews, setVerificationReviews] = useState<VerificationReview[]>([]);
   const [safetyReports, setSafetyReports] = useState<SafetyReport[]>([]);
+  const [reportTarget, setReportTarget] = useState<{id:string;name:string} | null>(null);
+  const [reportReason, setReportReason] = useState("Harassment or unwanted contact");
+  const [reportDetails, setReportDetails] = useState("");
 
   const loadPhotos = async (userId: string) => {
     if (!supabase) return;
@@ -178,6 +197,7 @@ export default function Home() {
       setRoomLoading(true);
       const { data: room } = await supabase.from("rooms").select("id").eq("name", activeRoom).maybeSingle();
       if (!room || !active) { setRoomLoading(false); return; }
+      setActiveRoomId(room.id);
       await supabase.from("room_members").upsert({ room_id: room.id, user_id: userId, state: "active", last_seen_at: new Date().toISOString() }, { onConflict: "room_id,user_id" });
       const { data: members } = await supabase.from("room_members").select("user_id,bubble_color,last_seen_at").eq("room_id", room.id).neq("user_id", userId).order("last_seen_at", { ascending: false }).limit(30);
       const memberIds = (members ?? []).map(member => member.user_id);
@@ -187,8 +207,19 @@ export default function Home() {
       const photoUrls = new Map<string,string>();
       await Promise.all((photoRows ?? []).map(async photo => { const { data } = await supabase.storage.from("profile-photos").createSignedUrl(photo.storage_path, 3600); if (data?.signedUrl) photoUrls.set(photo.user_id, data.signedUrl); }));
       const onlineIds = new Set<string>();
+      const loadRoomMessages = async () => {
+        const { data: messageRows } = await supabase.from("room_messages").select("id,room_id,sender_id,body,created_at").eq("room_id", room.id).order("created_at", { ascending: true }).limit(60);
+        const senderIds = Array.from(new Set((messageRows ?? []).map(message => message.sender_id)));
+        const { data: senderProfiles } = senderIds.length ? await supabase.from("profiles").select("user_id,username").in("user_id", senderIds) : { data: [] };
+        const senderNames = new Map((senderProfiles ?? []).map(profile => [profile.user_id, profile.username]));
+        if (active) setRoomMessages((messageRows ?? []).map(message => ({ ...message, senderName: message.sender_id === userId ? "You" : senderNames.get(message.sender_id) ?? "Room member" })));
+      };
+      await loadRoomMessages();
       const syncPresence = () => { const state = channel?.presenceState<Record<string,string>>() ?? {}; Object.values(state).flat().forEach(entry => { if (entry.user_id) onlineIds.add(entry.user_id); }); };
-      channel = supabase.channel(`room:${room.id}`, { config: { presence: { key: userId } } }).on("presence", { event: "sync" }, () => { syncPresence(); setRoomPeople(current => current.map(person => ({ ...person, online: person.id ? onlineIds.has(person.id) : person.online }))); }).subscribe(async status => { if (status === "SUBSCRIBED") await channel?.track({ user_id: userId, room_id: room.id, online_at: new Date().toISOString() }); });
+      channel = supabase.channel(`room:${room.id}`, { config: { presence: { key: userId } } })
+        .on("presence", { event: "sync" }, () => { syncPresence(); setRoomPeople(current => current.map(person => ({ ...person, online: person.id ? onlineIds.has(person.id) : person.online }))); })
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "room_messages", filter: `room_id=eq.${room.id}` }, () => void loadRoomMessages())
+        .subscribe(async status => { if (status === "SUBSCRIBED") await channel?.track({ user_id: userId, room_id: room.id, online_at: new Date().toISOString() }); });
       const memberById = new Map((members ?? []).map(member => [member.user_id, member]));
       const mapped: RoomPerson[] = (profiles ?? []).map(profile => ({ id: profile.user_id, name: profile.username, age: profile.age, area: profile.broad_area || "Nearby area", note: profile.bio || "Say hello and ask what brought them into this room.", tags: [...(profile.intentions ?? []), ...(profile.interests ?? [])].slice(0,4), initials: profile.username.slice(0,2).toUpperCase(), gender:profile.gender, interestedIn:profile.interested_in ?? [], preferredMinAge:profile.preferred_min_age ?? 18, preferredMaxAge:profile.preferred_max_age ?? 99, photoUrl: photoUrls.get(profile.user_id), tone: memberById.get(profile.user_id)?.bubble_color ?? "mint", online: onlineIds.has(profile.user_id), sample: false }));
       if (active) { setRoomPeople(mapped); setRoomMemberCount((members?.length ?? 0) + 1); setRoomLoading(false); }
@@ -196,6 +227,22 @@ export default function Home() {
     void loadRoom();
     return () => { active = false; if (channel) void supabase.removeChannel(channel); };
   }, [activeRoom, verified, userId]);
+
+  useEffect(() => {
+    if (!supabase || !verified) { setRoomCounts({}); return; }
+    let active = true;
+    const loadRoomCounts = async () => {
+      const entries = await Promise.all(rooms.map(async room => {
+        const { data: row } = await supabase.from("rooms").select("id").eq("name", room.name).maybeSingle();
+        if (!row) return [room.name, 0] as const;
+        const { count } = await supabase.from("room_members").select("user_id", { count: "exact", head: true }).eq("room_id", row.id).neq("state", "left");
+        return [room.name, count ?? 0] as const;
+      }));
+      if (active) setRoomCounts(Object.fromEntries(entries));
+    };
+    void loadRoomCounts();
+    return () => { active = false; };
+  }, [verified, activeRoom]);
 
   useEffect(() => {
     if (!supabase || !verified || !userId) { setInvitations([]); setIntroductions([]); return; }
@@ -410,21 +457,49 @@ export default function Home() {
     if (error) return setAuthMessage(error.message);
     setMessageText(""); await openConversation(selectedConversation);
   };
+  const sendRoomMessage = async () => {
+    const body = roomMessageText.trim();
+    if (!supabase || !userId || !activeRoomId || body.length < 1) return;
+    setAuthBusy(true); setAuthMessage("");
+    const { error } = await supabase.from("room_messages").insert({ room_id: activeRoomId, sender_id: userId, body });
+    setAuthBusy(false);
+    if (error) return setAuthMessage(friendlyError(error, "Your room message could not be sent."));
+    setRoomMessageText("");
+  };
   const blockChatMember = async () => {
     if (!supabase || !userId || !selectedConversation) return;
     await supabase.from("blocks").upsert({ blocker_id:userId, blocked_id:selectedConversation.otherId });
     setConversations(current => current.filter(item => item.id !== selectedConversation.id)); setModal("messages");
   };
-  const reportChatMember = async () => {
-    if (!supabase || !userId || !selectedConversation) return;
-    const { error } = await supabase.from("reports").insert({ reporter_id:userId, reported_id:selectedConversation.otherId, reason:`Reported from private conversation ${selectedConversation.id}.` });
-    setAuthMessage(error?.message ?? "Report received. Our safety review can now examine this account.");
+  const openReport = (id: string, name: string) => { setReportTarget({id,name}); setReportReason("Harassment or unwanted contact"); setReportDetails(""); setAuthMessage(""); setModal("report"); };
+  const submitSafetyReport = async () => {
+    if (!supabase || !userId || !reportTarget) return;
+    setAuthBusy(true); setAuthMessage("");
+    const detail = reportDetails.trim() ? ` — ${reportDetails.trim()}` : "";
+    const { error } = await supabase.from("reports").insert({ reporter_id:userId, reported_id:reportTarget.id, reason:`${reportReason}${detail}` });
+    setAuthBusy(false);
+    if (error) return setAuthMessage(friendlyError(error, "Your report could not be submitted."));
+    setAuthMessage("Report received. The member is not notified, and the safety queue can now review it.");
+    setReportDetails("");
   };
   const installApp = async () => {
     if (installPrompt) { await installPrompt.prompt(); await installPrompt.userChoice; setInstallPrompt(null); return; }
     setInstallHelpOpen(true);
   };
-  const useNearbyLocation = () => navigator.geolocation?.getCurrentPosition(() => setLocationReady(true), () => setLocationReady(false), { enableHighAccuracy: false, maximumAge: 600000, timeout: 8000 });
+  const useNearbyLocation = () => {
+    if (!supabase || !userId || !navigator.geolocation) return setAuthMessage("Approximate location is not available in this browser.");
+    navigator.geolocation.getCurrentPosition(async position => {
+      const cellLat = Math.floor((position.coords.latitude + 90) * 4);
+      const cellLon = Math.floor((position.coords.longitude + 180) * 4);
+      const { error: locationError } = await supabase.from("profile_location_cells").upsert({ user_id: userId, cell_lat: cellLat, cell_lon: cellLon, updated_at: new Date().toISOString() });
+      if (locationError) { setLocationReady(false); return setAuthMessage(friendlyError(locationError, "Nearby preference could not be saved.")); }
+      const { data, error } = await supabase.rpc("nearby_member_ids", { p_cell_lat: cellLat, p_cell_lon: cellLon });
+      if (error) { setLocationReady(false); return setAuthMessage(friendlyError(error, "Nearby preference could not be applied.")); }
+      setNearbyOrder((data ?? []).map((row: { user_id: string }) => row.user_id));
+      setLocationReady(true);
+      setAuthMessage("Nearby preference is on. Meet Freely stored only a broad map cell—not your coordinates.");
+    }, () => { setLocationReady(false); setAuthMessage("Location access was not enabled. Your broad-area setting is still in use."); }, { enableHighAccuracy: false, maximumAge: 600000, timeout: 8000 });
+  };
   const beginRoomSwipe = (event: React.PointerEvent) => { swipeMoved.current = false; swipeStart.current = { x: event.clientX - roomOffset.x, y: event.clientY - roomOffset.y }; event.currentTarget.setPointerCapture(event.pointerId); };
   const moveRoom = (event: React.PointerEvent) => { if (!swipeStart.current) return; const x = event.clientX - swipeStart.current.x; const y = event.clientY - swipeStart.current.y; if (Math.abs(x - roomOffset.x) > 7 || Math.abs(y - roomOffset.y) > 7) { swipeMoved.current = true; setSwipeHintVisible(false); } setRoomOffset({ x: Math.max(-190, Math.min(190, x)), y: Math.max(-230, Math.min(230, y)) }); };
   const endRoomSwipe = () => { swipeStart.current = null; window.setTimeout(() => { swipeMoved.current = false; }, 0); };
@@ -462,8 +537,12 @@ export default function Home() {
     if (!error) await loadPhotos(userId); setAuthMessage(error?.message ?? "Photo removed."); setPhotoBusy(false);
   };
   const primaryPhoto = photos.find(photo => photo.is_primary) ?? photos[0];
-  const activeRoomDetails = rooms.find(room => room.name === activeRoom) ?? rooms[2];
-  const roomCandidates = verified ? roomPeople : people;
+  const roomCandidates = verified ? [...roomPeople].sort((a,b) => {
+    if (!locationReady) return 0;
+    const aRank = a.id ? nearbyOrder.indexOf(a.id) : -1;
+    const bRank = b.id ? nearbyOrder.indexOf(b.id) : -1;
+    return (aRank < 0 ? Number.MAX_SAFE_INTEGER : aRank) - (bRank < 0 ? Number.MAX_SAFE_INTEGER : bRank);
+  }) : people;
   const visiblePeople = roomCandidates.filter(person => {
     if (compatibilityMode === "strict" && !person.sample) {
       if (person.age !== null && (person.age < preferredMinAge || person.age > preferredMaxAge)) return false;
@@ -479,7 +558,8 @@ export default function Home() {
     return true;
   });
   const activeFilterCount = Number(filterMinAge > 18 || filterMaxAge < 99) + Number(Boolean(filterIntention)) + Number(Boolean(filterGender)) + Number(Boolean(filterArea)) + Number(filterOnlineOnly);
-  const visibleRoomCount = roomMemberCount || activeRoomDetails.count;
+  const visibleRoomCount = roomMemberCount;
+  const unreadConversationCount = conversations.reduce((total, conversation) => total + conversation.unread, 0);
   const openMyProfile = () => { setAuthMessage(""); setModal("profile"); };
 
   if (!browserReady) {
@@ -490,7 +570,7 @@ export default function Home() {
     <main className={signedIn && verified ? "member-session" : "visitor-session"}>
       {signedIn && verified && <section className="mobile-app" aria-label="Meet Freely member room">
         {isAdmin && <button className="admin-console-launch" onClick={openAdminConsole}>Owner console</button>}
-        <header className="mobile-app-bar"><button className="app-menu-button" onClick={() => setMobileMenuOpen(true)} aria-label="Open app menu">☰</button><div><small>{activeRoom.toUpperCase()} · {locationReady ? "NEARBY FIRST" : broadArea.toUpperCase()}</small><strong>{roomLoading ? "Opening room…" : `${visibleRoomCount} here recently`}</strong></div><button className="my-mini-bubble" onClick={openMyProfile} aria-label="Edit my profile">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your profile" /> : username.slice(0, 2).toUpperCase() || "ME"}</button></header>
+        <header className="mobile-app-bar"><button className="app-menu-button" onClick={() => setMobileMenuOpen(true)} aria-label="Open app menu">☰</button><div><small>{activeRoom.toUpperCase()} · {locationReady ? "NEARBY PREFERENCE ON" : broadArea.toUpperCase()}</small><strong>{roomLoading ? "Opening room…" : `${visibleRoomCount} member${visibleRoomCount === 1 ? "" : "s"} here recently`}</strong></div><button className="my-mini-bubble" onClick={openMyProfile} aria-label="Edit my profile">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your profile" /> : username.slice(0, 2).toUpperCase() || "ME"}</button></header>
         <div className="mobile-room" onPointerDown={beginRoomSwipe} onPointerMove={moveRoom} onPointerUp={endRoomSwipe} onPointerCancel={endRoomSwipe}>
           <div className="mobile-bubble-field" style={{ transform: `translate(${roomOffset.x}px, ${roomOffset.y}px)` }}>
           <button className="mobile-own-bubble" onClick={openMyProfile}><span className="bubble-photo">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your primary profile" /> : username.slice(0, 2).toUpperCase() || "ME"}</span><strong>{username || "Your bubble"}</strong><small>You · tap to edit</small><span className="presence"><i />Here now</span></button>
@@ -499,7 +579,7 @@ export default function Home() {
           <button className="mobile-invite-action" onClick={() => { setAuthMessage(""); setModal("invite"); }}>＋ <span>Post an invitation</span></button>
           <button className="mobile-filter-action" onClick={() => setModal("filters")}>☷ Filters{activeFilterCount ? ` · ${activeFilterCount}` : ""}</button>
         </div>
-        {mobileMenuOpen && <><button className="drawer-scrim" onClick={() => setMobileMenuOpen(false)} aria-label="Close menu" /><aside className="app-drawer" aria-label="App menu"><div className="drawer-head"><span className="brand"><i className="brand-dot">●</i> meet freely</span><button onClick={() => setMobileMenuOpen(false)} aria-label="Close menu">×</button></div><button className="nearby-control" onClick={useNearbyLocation}><span>◎</span><div><strong>{locationReady ? "Nearby sorting is on" : "Show people nearest first"}</strong><small>{locationReady ? "Approximate location stays private" : `Or keep using ${broadArea}`}</small></div></button><p className="drawer-label">ROOMS</p>{rooms.map(room => <button className={`drawer-room ${activeRoom === room.name ? "is-active" : ""}`} aria-current={activeRoom === room.name ? "page" : undefined} key={room.name} onClick={() => { setActiveRoom(room.name); setRoomOffset({x:0,y:0}); setSwipeHintVisible(true); setMobileMenuOpen(false); }}><span style={{background:room.color}}>{room.icon}</span><strong>{room.name}</strong><small>{room.count} here</small></button>)}<div className="drawer-links"><button onClick={() => { setMobileMenuOpen(false); setModal("invite"); }}>Open invitations</button><button onClick={() => { setMobileMenuOpen(false); setModal("messages"); }}>Messages <span className="menu-badge">0</span></button><button onClick={() => { setMobileMenuOpen(false); openMyProfile(); }}>My profile</button><button onClick={installApp}>Add Meet Freely to Home Screen</button><a href="#safety" onClick={() => setMobileMenuOpen(false)}>Safety & privacy</a><button onClick={signOut}>Sign out</button></div></aside></>}
+        {mobileMenuOpen && <><button className="drawer-scrim" onClick={() => setMobileMenuOpen(false)} aria-label="Close menu" /><aside className="app-drawer" aria-label="App menu"><div className="drawer-head"><span className="brand"><i className="brand-dot">●</i> meet freely</span><button onClick={() => setMobileMenuOpen(false)} aria-label="Close menu">×</button></div><button className="nearby-control" onClick={useNearbyLocation}><span>◎</span><div><strong>{locationReady ? "Nearby preference is on" : "Prefer people in my area"}</strong><small>{locationReady ? "Exact coordinates are not displayed or saved" : `Or keep using ${broadArea}`}</small></div></button><p className="drawer-label">ROOMS</p>{rooms.map(room => <button className={`drawer-room ${activeRoom === room.name ? "is-active" : ""}`} aria-current={activeRoom === room.name ? "page" : undefined} key={room.name} onClick={() => { setActiveRoom(room.name); setRoomOffset({x:0,y:0}); setSwipeHintVisible(true); setMobileMenuOpen(false); }}><span style={{background:room.color}}>{room.icon}</span><strong>{room.name}</strong><small>{roomCounts[room.name] ?? 0} here recently</small></button>)}<div className="drawer-links"><button onClick={() => { setMobileMenuOpen(false); setModal("roomchat"); }}>Room conversation</button><button onClick={() => { setMobileMenuOpen(false); setModal("invite"); }}>Open invitations</button><button onClick={() => { setMobileMenuOpen(false); setModal("messages"); }}>Messages {unreadConversationCount > 0 && <span className="menu-badge">{unreadConversationCount}</span>}</button><button onClick={() => { setMobileMenuOpen(false); openMyProfile(); }}>My profile</button><button onClick={installApp}>Add Meet Freely to Home Screen</button><a href="#safety" onClick={() => setMobileMenuOpen(false)}>Safety & privacy</a><button onClick={signOut}>Sign out</button></div></aside></>}
         {installHelpOpen && <div className="install-lightbox" role="dialog" aria-modal="true"><button className="close" onClick={() => setInstallHelpOpen(false)} aria-label="Close">×</button><div className="install-icon">●</div><p className="eyebrow">KEEP THE ROOM CLOSE</p><h2>Add Meet Freely to your Home Screen</h2><p><strong>On iPhone:</strong> tap the Share button in Safari, then choose <em>Add to Home Screen</em>.</p><p><strong>On Android:</strong> open the browser menu and choose <em>Install app</em> or <em>Add to Home screen</em>.</p><button className="primary full" onClick={() => setInstallHelpOpen(false)}>Got it</button></div>}
       </section>}
       <nav className="nav">
@@ -509,7 +589,7 @@ export default function Home() {
 
       <section className="hero" id="top">
         <div className="hero-copy">
-          <p className="eyebrow"><span className="live-dot" /> 86 people are open to meeting nearby</p>
+          <p className="eyebrow"><span className="live-dot" /> Interest rooms for verified adults</p>
           <h1>Dating should feel like <em>walking into a room.</em></h1>
           <p className="lede">Look around. Notice someone. Say hello. No swiping, hidden likes, boosts, or algorithm deciding who gets seen.</p>
           <div className="hero-actions">
@@ -520,9 +600,9 @@ export default function Home() {
         </div>
 
         <div className="room-window" aria-label={verified ? "Member room preview" : "Protected visitor preview"}>
-          <div className="window-top"><span>THE LOCAL ROOM</span><span className="active"><i /> 86 here recently</span></div>
-          <div className={`preview-bubbles ${verified ? "revealed" : "protected"}`}>
-            {people.slice(0, 4).map((person, index) => <div className={`member-bubble preview-bubble bubble-${index + 1} ${person.tone}`} key={person.name}><div className={`bubble-photo ${verified ? "sample-photo" : ""}`} style={verified ? {backgroundPosition:person.photoPosition} : undefined}>{verified ? "" : "•"}</div><strong>{verified ? person.name : "Someone’s here"}</strong><small>{verified ? `${person.age} · ${person.area}` : "Identity protected"}</small></div>)}
+          <div className="window-top"><span>EXAMPLE ROOM PREVIEW</span><span className="active"><i /> Illustration</span></div>
+          <div className="preview-bubbles revealed">
+            {people.slice(0, 4).map((person, index) => <div className={`member-bubble preview-bubble bubble-${index + 1} ${person.tone}`} key={person.name}><div className="bubble-photo sample-photo" style={{backgroundPosition:person.photoPosition}} /><strong>{person.name}</strong><small>Example profile</small></div>)}
           </div>
           {!verified && <div className="privacy-shield"><div className="lock">⌁</div><strong>People, not a public catalog.</strong><span>Verify to see who’s inside.</span><button onClick={enter}>Enter securely</button></div>}
         </div>
@@ -537,7 +617,7 @@ export default function Home() {
             {verified && invitations.length ? invitations.slice(0,4).map(invitation => <article className="invite-card" key={invitation.id} onClick={() => invitation.author.id === userId ? openMyProfile() : hello(invitation.author)}><div className={`invite-avatar ${invitation.author.tone}`}>{invitation.author.initials}<i /></div><div><div className="invite-meta"><strong>{invitation.author.name}{invitation.author.id === userId ? " · You" : ""}</strong><span>{new Date(invitation.created_at).toLocaleDateString([], { month:"short", day:"numeric" })}</span></div><p>{invitation.body}</p><small>{invitation.roomName} · {invitation.broad_area || invitation.author.area}</small></div><button>{invitation.author.id === userId ? "Profile" : "Message"} <span>→</span></button></article>) : <article className="invite-card" onClick={verified ? () => setModal("invite") : enter}><div className="invite-avatar rose">MF<i /></div><div><div className="invite-meta"><strong>{verified ? "The room is open" : "Verified member"}</strong><span>Now</span></div><p>{verified ? "No live invitations yet. Be the first to suggest something." : "Verify your account to read open invitations."}</p><small>Precise locations are never shown</small></div><button>{verified ? "Post" : "Join"} <span>→</span></button></article>}
             <button className="post-invite" onClick={verified ? () => { setAuthMessage(""); setModal("invite"); } : enter}><span>＋</span><div><strong>Post an open invitation</strong><small>Tell the room what you feel like doing.</small></div></button>
           </div>
-          <aside className="interest-rooms"><p className="eyebrow">BROWSE ROOMS</p>{rooms.map(room => <button className={activeRoom === room.name ? "selected-room" : ""} aria-current={activeRoom === room.name ? "page" : undefined} key={room.name} onClick={() => { setActiveRoom(room.name); setRoomOffset({x:0,y:0}); document.getElementById("room")?.scrollIntoView({behavior:"smooth"}); }}><span className={`room-icon ${room.name === "Live music" ? "plum" : room.name === "Food & coffee" ? "gold" : room.name === "Outdoors" ? "mint" : "coral"}`}>{room.icon}</span><div><strong>{room.name}</strong><small>{room.count} here recently</small></div><b>{activeRoom === room.name ? "✓" : "→"}</b></button>)}</aside>
+          <aside className="interest-rooms"><p className="eyebrow">BROWSE ROOMS</p>{rooms.map(room => <button className={activeRoom === room.name ? "selected-room" : ""} aria-current={activeRoom === room.name ? "page" : undefined} key={room.name} onClick={() => { setActiveRoom(room.name); setRoomOffset({x:0,y:0}); document.getElementById("room")?.scrollIntoView({behavior:"smooth"}); }}><span className={`room-icon ${room.name === "Live music" ? "plum" : room.name === "Food & coffee" ? "gold" : room.name === "Outdoors" ? "mint" : "coral"}`}>{room.icon}</span><div><strong>{room.name}</strong><small>{verified ? `${roomCounts[room.name] ?? 0} here recently` : "Sign in to see live activity"}</small></div><b>{activeRoom === room.name ? "✓" : "→"}</b></button>)}</aside>
         </div>
       </section>
 
@@ -559,12 +639,13 @@ export default function Home() {
           <div className={`block-dock ${draggingPerson ? "is-ready" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={hideDraggedPerson}><span>×</span><strong>Hide & block</strong><small>Drag someone here for mutual invisibility</small></div>
           {hiddenPeople.length > 0 && <button className="undo-hide" onClick={() => setHiddenPeople(current => current.slice(0, -1))}>Undo last hide</button>}
         </div>
+        {verified && <section className="room-chat" aria-label={`${activeRoom} room conversation`}><div className="room-chat-head"><div><p className="eyebrow">ROOM CONVERSATION</p><h3>Talk with everyone here.</h3></div><small>Visible only to verified members</small></div><div className="room-chat-thread" aria-live="polite">{roomMessages.length ? roomMessages.map(message => <article className={message.sender_id === userId ? "mine" : ""} key={message.id}><div><strong>{message.senderName}</strong><time dateTime={message.created_at}>{new Date(message.created_at).toLocaleTimeString([], {hour:"numeric",minute:"2-digit"})}</time></div><p>{message.body}</p></article>) : <div className="room-chat-empty"><strong>The conversation is open.</strong><p>Say something about {activeRoom.toLowerCase()} to welcome the next person in.</p></div>}</div><div className="room-chat-compose"><textarea value={roomMessageText} onChange={event => setRoomMessageText(event.target.value.slice(0,500))} placeholder={`Say something to the ${activeRoom} room…`} aria-label="Room message"/><button className="primary" onClick={sendRoomMessage} disabled={!roomMessageText.trim() || authBusy}>Send <span>→</span></button></div><small className="character-note">{roomMessageText.length}/500 · Be welcoming. Reports go directly to the safety queue.</small>{authMessage && <p className="auth-message" role="status">{authMessage}</p>}</section>}
       </section>
 
       <section className="how" id="how">
         <div className="how-intro"><p className="eyebrow">HOW IT WORKS</p><h2>No matching machinery.<br/>Just a better room.</h2><p>Meet Freely gives adults the freedom to discover and approach each other—while keeping member profiles private from unverified visitors.</p></div>
         <div className="steps">
-          <article><b>01</b><h3>Verify once</h3><p>A quick age and identity check keeps the room human. Your legal identity is never shown to members.</p></article>
+          <article><b>01</b><h3>Verify once</h3><p>An adult-verification review keeps the room human. Your birth date and verification details are never shown to members.</p></article>
           <article><b>02</b><h3>Look around</h3><p>Browse the whole room using filters you control. Choose chronological discovery whenever you want.</p></article>
           <article><b>03</b><h3>Say hello</h3><p>Send a thoughtful introduction directly. No mutual swipe or payment to reveal interest.</p></article>
         </div>
@@ -582,7 +663,7 @@ export default function Home() {
 
       <section className="pricing">
         <div><p className="eyebrow">ONE FAIR PRICE</p><h2>We charge for the room.<br/>Never for someone’s affection.</h2></div>
-        <div className="price-card"><span>Verified membership</span><strong><sup>$</sup>2.99<small>/month</small></strong><ul><li>See everyone in your rooms</li><li>Send and receive introductions</li><li>See every like—immediately</li><li>No ads, boosts, or visibility tiers</li></ul><button className="primary dark" onClick={enter}>Join the room <span>→</span></button><small>Cancel anytime. No surprise upgrades.</small></div>
+        <div className="price-card"><span>Verified membership</span><strong><sup>$</sup>2.99<small>/month</small></strong><ul><li>See everyone in your rooms</li><li>Join room conversations</li><li>Send and receive introductions</li><li>No ads, boosts, or visibility tiers</li></ul><button className="primary dark" onClick={enter}>Join the room <span>→</span></button><small>Cancel anytime. No surprise upgrades.</small></div>
       </section>
 
       <footer><a className="brand" href="#top"><span className="brand-dot">●</span> meet freely</a><p>Meet freely. No match required.</p><div><a href="/safety">Safety Center</a><a href="/community-guidelines">Community Guidelines</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div></footer>
@@ -608,6 +689,8 @@ export default function Home() {
           <label className="field-label">Broad area contains<input className="auth-input" value={filterArea} onChange={(event) => setFilterArea(event.target.value.slice(0,40))} placeholder="Downtown, west side…" /></label>
           <label className="adult-check visibility-check"><input type="checkbox" checked={filterOnlineOnly} onChange={(event) => setFilterOnlineOnly(event.target.checked)} /><span><strong>Here now only</strong><small>Hide bubbles belonging to members who are currently away.</small></span></label>
           <div className="filter-summary"><strong>{visiblePeople.length}</strong><span>people fit these filters in the current room</span></div><button className="primary full" onClick={() => setModal(null)}>Show these people <span>→</span></button><button className="signout-button" onClick={() => { setFilterMinAge(18); setFilterMaxAge(99); setFilterIntention(""); setFilterGender(""); setFilterArea(""); setFilterOnlineOnly(false); }}>Clear all filters</button>
+        </> : modal === "roomchat" ? <>
+          <p className="eyebrow">{activeRoom.toUpperCase()} ROOM</p><h2>Room conversation.</h2><p>Talk openly with the verified members sharing this room. Keep personal contact details private until trust is earned.</p><div className="room-chat-thread modal-room-chat" aria-live="polite">{roomMessages.length ? roomMessages.map(message => <article className={message.sender_id === userId ? "mine" : ""} key={message.id}><div><strong>{message.senderName}</strong><time dateTime={message.created_at}>{new Date(message.created_at).toLocaleTimeString([], {hour:"numeric",minute:"2-digit"})}</time></div><p>{message.body}</p></article>) : <div className="room-chat-empty"><strong>The conversation is open.</strong><p>Be the first to say something about {activeRoom.toLowerCase()}.</p></div>}</div><textarea value={roomMessageText} onChange={event => setRoomMessageText(event.target.value.slice(0,500))} placeholder={`Say something to the ${activeRoom} room…`} aria-label="Room message"/><p className="character-note">{roomMessageText.length}/500</p><button className="primary full" onClick={sendRoomMessage} disabled={!roomMessageText.trim() || authBusy}>{authBusy ? "Sending…" : "Send to the room"} <span>→</span></button>{authMessage && <p className="auth-message" role="status">{authMessage}</p>}
         </> : modal === "profile" ? <>
           <div className="profile-editor-head"><div className="modal-avatar sky">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your profile" /> : username.slice(0, 2).toUpperCase() || "ME"}</div><div><p className="eyebrow">MY PROFILE</p><h2>Make it feel like you.</h2></div></div>
           <p>This is what verified members see after opening your bubble. Keep it warm, specific, and free of surnames or social handles.</p>
@@ -631,7 +714,9 @@ export default function Home() {
         </> : modal === "messages" ? <>
           <div className="modal-mark">↗</div><p className="eyebrow">MESSAGES</p><h2>Your conversations.</h2>{conversations.length > 0 && <div className="conversation-list">{conversations.map(item => <button key={item.id} onClick={() => void openConversation(item)}><span><strong>{item.otherName}</strong><small>{item.preview}</small></span>{item.unread > 0 && <b>{item.unread}</b>}</button>)}</div>}<p className="eyebrow inbox-divider">INTRODUCTIONS</p>{introductions.length ? <div className="introduction-inbox">{introductions.map(item => <article key={item.id}><div className="introduction-head"><strong>{item.incoming ? "From" : "To"} {item.personName}</strong><span className={`intro-state ${item.state}`}>{item.state}</span></div><p>{item.message}</p><small>{new Date(item.created_at).toLocaleString([], { month:"short", day:"numeric", hour:"numeric", minute:"2-digit" })}</small>{item.incoming && item.state === "pending" && <div className="introduction-actions"><button onClick={() => respondToIntroduction(item.id,"accepted")} disabled={authBusy}>Accept</button><button onClick={() => respondToIntroduction(item.id,"passed")} disabled={authBusy}>Pass</button><button onClick={() => respondToIntroduction(item.id,"reported")} disabled={authBusy}>Report</button></div>}</article>)}</div> : <div className="empty-messages"><div>✦</div><strong>No introductions yet</strong><p>Open a member’s bubble and send a thoughtful hello. An accepted introduction becomes a private conversation.</p></div>}{authMessage && <p className="auth-message" role="status">{authMessage}</p>}<button className="primary full" onClick={() => { setModal(null); document.getElementById("room")?.scrollIntoView(); }}>Return to the room <span>→</span></button>
         </> : modal === "chat" ? <>
-          <p className="eyebrow">PRIVATE CONVERSATION</p><h2>{selectedConversation?.otherName}</h2><div className="chat-safety"><button onClick={reportChatMember}>Report</button><button onClick={blockChatMember}>Block & remove</button></div><div className="chat-thread">{directMessages.length ? directMessages.map(message => <article className={message.sender_id === userId ? "mine" : "theirs"} key={message.id}><p>{message.body}</p><small>{new Date(message.created_at).toLocaleString([], {hour:"numeric",minute:"2-digit"})}</small></article>) : <p className="chat-empty">You both accepted the introduction. Start the conversation when you’re ready.</p>}</div><textarea value={messageText} onChange={(event) => setMessageText(event.target.value.slice(0,1000))} placeholder="Write a message…" aria-label="Private message"/><p className="character-note">{messageText.length}/1000 · Keep personal contact details private until trust is earned.</p><button className="primary full" onClick={sendDirectMessage} disabled={!messageText.trim() || authBusy}>{authBusy ? "Sending…" : "Send message"} <span>→</span></button>{authMessage && <p className="auth-message" role="status">{authMessage}</p>}<button className="signout-button" onClick={() => setModal("messages")}>Back to messages</button>
+          <p className="eyebrow">PRIVATE CONVERSATION</p><h2>{selectedConversation?.otherName}</h2><div className="chat-safety"><button onClick={() => selectedConversation && openReport(selectedConversation.otherId, selectedConversation.otherName)}>Report</button><button onClick={blockChatMember}>Block & remove</button></div><div className="chat-thread">{directMessages.length ? directMessages.map(message => <article className={message.sender_id === userId ? "mine" : "theirs"} key={message.id}><p>{message.body}</p><small>{new Date(message.created_at).toLocaleString([], {hour:"numeric",minute:"2-digit"})}</small></article>) : <p className="chat-empty">You both accepted the introduction. Start the conversation when you’re ready.</p>}</div><textarea value={messageText} onChange={(event) => setMessageText(event.target.value.slice(0,1000))} placeholder="Write a message…" aria-label="Private message"/><p className="character-note">{messageText.length}/1000 · Keep personal contact details private until trust is earned.</p><button className="primary full" onClick={sendDirectMessage} disabled={!messageText.trim() || authBusy}>{authBusy ? "Sending…" : "Send message"} <span>→</span></button>{authMessage && <p className="auth-message" role="status">{authMessage}</p>}<button className="signout-button" onClick={() => setModal("messages")}>Back to messages</button>
+        </> : modal === "report" ? <>
+          <div className="modal-mark">!</div><p className="eyebrow">PRIVATE SAFETY REPORT</p><h2>Tell us what happened.</h2><p>Reports are never shown to {reportTarget?.name ?? "the other member"}. If you are in immediate danger, contact local emergency services.</p><label className="field-label">What best describes this?<select className="auth-input" value={reportReason} onChange={event => setReportReason(event.target.value)}><option>Harassment or unwanted contact</option><option>Threats or dangerous behavior</option><option>Fake identity or possible scam</option><option>Underage concern</option><option>Sexual content or boundary violation</option><option>Hate speech or discrimination</option><option>Spam or commercial solicitation</option><option>Something else</option></select></label><label className="field-label">Details<textarea value={reportDetails} onChange={event => setReportDetails(event.target.value.slice(0,1000))} placeholder="Share only what the safety team needs to understand the situation." /></label><p className="character-note">{reportDetails.length}/1000</p><button className="primary full" onClick={submitSafetyReport} disabled={authBusy}>{authBusy ? "Submitting…" : "Submit private report"}</button>{authMessage && <p className="auth-message" role="status">{authMessage}</p>}<button className="signout-button" onClick={() => setModal("messages")}>Return to messages</button>
         </> : modal === "admin" ? <>
           <div className="modal-mark">✓</div><p className="eyebrow">OWNER ONLY</p><h2>Verification & safety.</h2><p className="admin-privacy-note">Birthdates are displayed only here for adult-verification review. They are never placed on member profiles.</p><p className="eyebrow inbox-divider">AGE VERIFICATION</p><div className="admin-review-list">{verificationReviews.map(item => <article key={item.user_id}><div><strong>{item.username}</strong><small>{item.birth_date ? `Birth date: ${new Date(`${item.birth_date}T12:00:00`).toLocaleDateString()}` : "No birth date supplied"} · {item.status} · account {item.accountState}</small></div><div><button onClick={() => reviewVerification(item.user_id,"verified")} disabled={authBusy}>Approve 18+</button><button onClick={() => reviewVerification(item.user_id,"failed")} disabled={authBusy}>Reject</button><button onClick={() => setAccountState(item.user_id,"paused")}>Suspend</button><button onClick={() => setAccountState(item.user_id,"active")}>Restore</button><button onClick={() => setAccountState(item.user_id,"banned")}>Ban</button></div></article>)}</div><p className="eyebrow inbox-divider">SAFETY REPORTS</p>{safetyReports.length ? <div className="admin-review-list">{safetyReports.map(report => <article key={report.id}><div><strong>{report.status}</strong><p>{report.reason}</p><small>{new Date(report.created_at).toLocaleString()}</small></div><div><button onClick={() => reviewReport(report.id,"reviewed")}>Reviewed</button><button onClick={() => reviewReport(report.id,"actioned")}>Actioned</button><button onClick={() => reviewReport(report.id,"dismissed")}>Dismiss</button></div></article>)}</div> : <p>No safety reports are waiting.</p>}{authMessage && <p className="auth-message" role="status">{authMessage}</p>}
         </> : modal === "invite" ? <>
@@ -644,7 +729,7 @@ export default function Home() {
         </> : <>
           <div className="member-profile-head"><div className={`modal-avatar ${selected?.sample ? "sample-photo" : ""} ${selected?.tone}`} style={selected?.photoUrl ? undefined : {backgroundPosition:selected?.photoPosition}}>{selected?.photoUrl ? <img src={selected.photoUrl} alt={`${selected.name} profile`} /> : selected?.sample ? "" : selected?.initials}</div><div><p className="eyebrow">MEMBER PROFILE{selected?.sample ? " · SAMPLE" : ""}</p><h2>{selected?.name}</h2><p>{selected?.age ? `${selected.age} · ` : ""}{selected?.gender ? `${selected.gender} · ` : ""}{selected?.area} · <span className={selected?.online ? "profile-online" : "profile-away"}>{selected?.online ? "Here now" : "Away"}</span></p></div></div>
           <p className="profile-bio">{selected?.note}</p><div className="profile-tags">{selected?.tags.map(tag => <span key={tag}>{tag}</span>)}</div>
-          {sent ? <div className="sent-note"><strong>Hello sent.</strong><p>Your introduction is waiting in their inbox. They can accept, politely pass, or report it—no awkward matching game.</p></div> : <><p className="profile-prompt">Feel a spark? Start with something from their profile.</p><textarea value={introductionText} onChange={(event) => setIntroductionText(event.target.value.slice(0,500))} aria-label="Introduction message"/><p className="character-note">{introductionText.length}/500 · Thoughtful introductions get thoughtful replies.</p><button className="primary full" onClick={sendIntroduction} disabled={!introductionText.trim() || authBusy}>{authBusy ? "Sending…" : "Send introduction"} <span>→</span></button>{authMessage && <p className="auth-message" role="status">{authMessage}</p>}</>}
+          {sent ? <div className="sent-note"><strong>Hello sent.</strong><p>Your introduction is waiting in their inbox. They can accept, politely pass, or report it—no awkward matching game.</p></div> : <><p className="profile-prompt">Feel a spark? Start with something from their profile.</p><textarea value={introductionText} onChange={(event) => setIntroductionText(event.target.value.slice(0,500))} aria-label="Introduction message"/><p className="character-note">{introductionText.length}/500 · Thoughtful introductions get thoughtful replies.</p><button className="primary full" onClick={sendIntroduction} disabled={!introductionText.trim() || authBusy}>{authBusy ? "Sending…" : "Send introduction"} <span>→</span></button>{authMessage && <p className="auth-message" role="status">{authMessage}</p>}</>}{selected && !selected.sample && <button className="signout-button" onClick={() => openReport(selected.id, selected.name)}>Report this profile</button>}
         </>}
       </div></div>}
     </main>
