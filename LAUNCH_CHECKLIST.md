@@ -18,7 +18,7 @@
 - [ ] Configure the Stripe Customer Portal to allow payment-method updates and subscription cancellation.
 - [ ] Run one complete Stripe test-mode purchase, renewal, failed-payment, cancellation, and refund cycle with two test accounts.
 - [ ] Connect production SMTP in Supabase Auth and test confirmation, recovery, and rate-limit behavior with Gmail, Outlook, and iCloud addresses.
-- [ ] Enable Supabase leaked-password protection: Authentication → Sign In / Providers → Password security.
+- [x] Enforce a strong free in-app password policy for account creation and recovery. Supabase leaked-password protection requires its paid Pro plan and is intentionally not part of the free launch stack.
 - [ ] Choose an adult-verification vendor or document the manual review procedure, evidence retention period, reviewer access, and appeal process.
 - [ ] Assign a safety inbox owner and publish response targets for urgent reports, routine reports, appeals, and law-enforcement requests.
 - [ ] Have a qualified attorney review the privacy policy, terms, age-verification flow, auto-renewal disclosures, and required state/country dating-service rules.

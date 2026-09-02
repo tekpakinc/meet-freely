@@ -67,6 +67,7 @@ export default function Home() {
   const [introductionText, setIntroductionText] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const strongPassword = password.length >= 12 && /[a-z]/.test(password) && /[A-Z]/.test(password) && /\d/.test(password) && /[^A-Za-z0-9]/.test(password);
   const [authMode, setAuthMode] = useState<"signin" | "signup" | "forgot" | "recovery">("signin");
   const [authMessage, setAuthMessage] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
@@ -321,7 +322,8 @@ export default function Home() {
 
   const enter = () => setModal("verify");
   const submitAuth = async () => {
-    if (!supabase || (authMode !== "recovery" && !email) || (authMode !== "forgot" && password.length < 8)) return;
+    const needsStrongPassword = authMode === "signup" || authMode === "recovery";
+    if (!supabase || (authMode !== "recovery" && !email) || (authMode === "signin" && password.length < 8) || (needsStrongPassword && !strongPassword)) return;
     setAuthBusy(true);
     setAuthMessage("");
     if (authMode === "forgot") {
@@ -671,11 +673,11 @@ export default function Home() {
       {modal && <div className="modal-backdrop" onMouseDown={() => setModal(null)}><div className="modal" onMouseDown={e => e.stopPropagation()} role="dialog" aria-modal="true">
         <button className="close" onClick={() => setModal(null)} aria-label="Close">×</button>
         {modal === "verify" ? <>
-          <div className="modal-mark">✓</div><p className="eyebrow">PRIVATE ACCOUNT</p><h2>{authMode === "signin" ? "Welcome back." : authMode === "signup" ? "Join the room." : authMode === "forgot" ? "Reset your password." : "Choose a new password."}</h2><p>{authMode === "forgot" ? "We’ll email you a private reset link." : authMode === "recovery" ? "Enter a new password with at least eight characters." : "Use your email and password. Your email and legal identity are never shown on your dating profile."}</p>
+          <div className="modal-mark">✓</div><p className="eyebrow">PRIVATE ACCOUNT</p><h2>{authMode === "signin" ? "Welcome back." : authMode === "signup" ? "Join the room." : authMode === "forgot" ? "Reset your password." : "Choose a new password."}</h2><p>{authMode === "forgot" ? "We’ll email you a private reset link." : authMode === "recovery" ? "Choose a strong new password." : "Use your email and password. Your email and legal identity are never shown on your dating profile."}</p>
           {authMode !== "recovery" && <div className="auth-tabs"><button className={authMode === "signin" ? "active" : ""} onClick={() => { setAuthMode("signin"); setAuthMessage(""); }}>Sign in</button><button className={authMode === "signup" ? "active" : ""} onClick={() => { setAuthMode("signup"); setAuthMessage(""); }}>Create account</button></div>}
           {authMode !== "recovery" && <input className="auth-input" type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" aria-label="Email address" />}
-          {authMode !== "forgot" && <input className="auth-input" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" aria-label="Password" />}
-          <button className="primary full" onClick={submitAuth} disabled={(authMode !== "recovery" && !email) || (authMode !== "forgot" && password.length < 8) || authBusy || !isSupabaseConfigured}>{authBusy ? "Working…" : authMode === "signin" ? "Sign in" : authMode === "signup" ? "Create my private account" : authMode === "forgot" ? "Email my reset link" : "Save new password"} <span>→</span></button>
+          {authMode !== "forgot" && <><input className="auth-input" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder={authMode === "signin" ? "Your password" : "12+ characters with upper, lower, number & symbol"} aria-label="Password" />{(authMode === "signup" || authMode === "recovery") && <small className="modal-foot">Use at least 12 characters with uppercase, lowercase, a number, and a symbol.</small>}</>}
+          <button className="primary full" onClick={submitAuth} disabled={(authMode !== "recovery" && !email) || (authMode === "signin" && password.length < 8) || ((authMode === "signup" || authMode === "recovery") && !strongPassword) || authBusy || !isSupabaseConfigured}>{authBusy ? "Working…" : authMode === "signin" ? "Sign in" : authMode === "signup" ? "Create my private account" : authMode === "forgot" ? "Email my reset link" : "Save new password"} <span>→</span></button>
           {authMode === "signin" && <button className="signout-button" onClick={() => {setAuthMode("forgot");setAuthMessage("");}}>Forgot password?</button>}{(authMode === "forgot" || authMode === "recovery") && <button className="signout-button" onClick={() => {setAuthMode("signin");setAuthMessage("");}}>Back to sign in</button>}
           {authMode === "signup" && <small className="modal-foot">By creating an account, you agree to the <a href="/terms">Terms</a>, <a href="/privacy">Privacy Policy</a>, and <a href="/community-guidelines">Community Guidelines</a>.</small>}{authMessage && <p className="auth-message" role="status">{authMessage}</p>}<small className="modal-foot">New accounts receive one confirmation email. Profile access still requires adult verification and active membership.</small>
         </> : modal === "onboarding" ? <>
