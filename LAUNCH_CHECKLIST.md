@@ -12,7 +12,7 @@
 - Privacy, terms, community-guidelines, and safety pages
 - Installable home-screen app, icons, social metadata, and custom domain
 
-## Owner actions before opening public registration
+## Owner actions for the public soft launch
 
 - [ ] Finish Stripe business verification and confirm payouts are enabled.
 - [ ] Configure the Stripe Customer Portal to allow payment-method updates and subscription cancellation.
@@ -25,4 +25,4 @@
 - [ ] Have two real devices test sign-up, confirmation links, photo upload, location permission denial, filtering, introductions, messaging, block/report, checkout, and cancellation.
 - [ ] Add production monitoring for Supabase Auth, database, Edge Functions, Stripe webhooks, and the public domain.
 
-Do not advertise the service as publicly launched until every owner action above is checked. A small invitation-only beta is appropriate before that point.
+Public registration can remain open while these items are completed, but unverified accounts must never enter rooms or contact members. Promote gradually until payment, email delivery, verification review, and safety-response handling have each been proven under real use.

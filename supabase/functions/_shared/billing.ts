@@ -42,3 +42,14 @@ export async function stripeRequest(path: string, body: URLSearchParams) {
   return data;
 }
 
+export async function stripeRead(path: string) {
+  const secret = Deno.env.get("STRIPE_SECRET_KEY");
+  if (!secret) throw new Error("Billing is not configured yet.");
+  const response = await fetch(`https://api.stripe.com/v1/${path}`, {
+    headers: { Authorization: `Bearer ${secret}` },
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data?.error?.message ?? "Stripe request failed.");
+  return data;
+}
+
