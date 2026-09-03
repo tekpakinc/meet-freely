@@ -25,7 +25,7 @@ async function prepareProfilePhoto(file: File) {
 }
 
 function friendlyError(error: unknown, fallback = "Something went wrong. Please try again.") {
-  const message = error instanceof Error ? error.message : typeof error === "object" && error && "message" in error ? String(error.message) : "";
+  const message = typeof error === "string" ? error : error instanceof Error ? error.message : typeof error === "object" && error && "message" in error ? String(error.message) : "";
   const normalized = message.toLowerCase();
   if (normalized.includes("row-level security") || normalized.includes("permission denied")) return "Your session no longer has permission to do that. Please sign out, sign back in, and try once more.";
   if (normalized.includes("duplicate") || normalized.includes("unique constraint")) return "That has already been submitted.";
@@ -167,11 +167,21 @@ export default function Home() {
       setHasBillingAccount(Boolean(account?.stripe_customer_id));
       setVerified(account?.state === "active" && account?.verification === "verified" && account?.membership_active === true);
       if (profile) await loadPhotos(userId);
-      setModal(profile ? null : "onboarding");
+      if (!profile) setModal("onboarding");
+      else if (membershipResult === "success" && !account?.membership_active) setModal("onboarding");
+      else setModal(null);
     };
-    supabase.auth.getSession().then(({ data }) => void refreshAccess(data.session?.user.id));
+    const refreshTimers: number[] = [];
+    supabase.auth.getSession().then(({ data }) => {
+      void refreshAccess(data.session?.user.id);
+      if (membershipResult === "success" && data.session?.user.id) {
+        [2000, 5000, 10000].forEach(delay => refreshTimers.push(window.setTimeout(() => void refreshAccess(data.session?.user.id), delay)));
+      }
+    });
+    const refreshOnFocus = () => { void supabase.auth.getSession().then(({data}) => refreshAccess(data.session?.user.id)); };
+    window.addEventListener("focus", refreshOnFocus);
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => { if (event === "PASSWORD_RECOVERY") { setAuthMode("recovery"); setModal("verify"); } window.setTimeout(() => void refreshAccess(session?.user.id), 0); });
-    return () => listener.subscription.unsubscribe();
+    return () => { listener.subscription.unsubscribe(); refreshTimers.forEach(window.clearTimeout); window.removeEventListener("focus", refreshOnFocus); };
   }, []);
 
   useEffect(() => {
@@ -191,16 +201,18 @@ export default function Home() {
   useEffect(() => { window.localStorage.setItem("meet-freely-pins", JSON.stringify(pinnedPeople)); }, [pinnedPeople]);
 
   useEffect(() => {
-    if (!supabase || !verified || !userId) { setRoomPeople([]); return; }
+    if (!supabase || !verified || !userId) { setRoomPeople([]); setRoomMessages([]); setRoomMemberCount(0); setActiveRoomId(null); return; }
     let active = true;
     let channel: ReturnType<NonNullable<typeof supabase>["channel"]> | null = null;
     const loadRoom = async () => {
       setRoomLoading(true);
-      const { data: room } = await supabase.from("rooms").select("id").eq("name", activeRoom).maybeSingle();
-      if (!room || !active) { setRoomLoading(false); return; }
+      const { data: room, error: roomError } = await supabase.from("rooms").select("id").eq("name", activeRoom).maybeSingle();
+      if (!room || roomError || !active) { setRoomLoading(false); if (active) setAuthMessage(friendlyError(roomError, "That room could not be opened. Please try another room.")); return; }
       setActiveRoomId(room.id);
-      await supabase.from("room_members").upsert({ room_id: room.id, user_id: userId, state: "active", last_seen_at: new Date().toISOString() }, { onConflict: "room_id,user_id" });
-      const { data: members } = await supabase.from("room_members").select("user_id,bubble_color,last_seen_at").eq("room_id", room.id).neq("user_id", userId).order("last_seen_at", { ascending: false }).limit(30);
+      const { error: joinError } = await supabase.from("room_members").upsert({ room_id: room.id, user_id: userId, state: "active", last_seen_at: new Date().toISOString() }, { onConflict: "room_id,user_id" });
+      if (joinError) { setRoomLoading(false); setAuthMessage(friendlyError(joinError, "You could not join that room.")); return; }
+      const { data: members, error: memberError } = await supabase.from("room_members").select("user_id,bubble_color,last_seen_at").eq("room_id", room.id).neq("user_id", userId).neq("state", "left").order("last_seen_at", { ascending: false }).limit(30);
+      if (memberError) { setRoomLoading(false); setAuthMessage(friendlyError(memberError, "The people in this room could not be loaded.")); return; }
       const memberIds = (members ?? []).map(member => member.user_id);
       const { data: profiles } = memberIds.length ? await supabase.from("profiles").select("user_id,username,age,broad_area,bio,intentions,interests,gender,interested_in,preferred_min_age,preferred_max_age").in("user_id", memberIds).eq("discoverable", true) : { data: [] };
       const profileIds = (profiles ?? []).map(profile => profile.user_id);
@@ -216,7 +228,7 @@ export default function Home() {
         if (active) setRoomMessages((messageRows ?? []).map(message => ({ ...message, senderName: message.sender_id === userId ? "You" : senderNames.get(message.sender_id) ?? "Room member" })));
       };
       await loadRoomMessages();
-      const syncPresence = () => { const state = channel?.presenceState<Record<string,string>>() ?? {}; Object.values(state).flat().forEach(entry => { if (entry.user_id) onlineIds.add(entry.user_id); }); };
+      const syncPresence = () => { onlineIds.clear(); const state = channel?.presenceState<Record<string,string>>() ?? {}; Object.values(state).flat().forEach(entry => { if (entry.user_id) onlineIds.add(entry.user_id); }); };
       channel = supabase.channel(`room:${room.id}`, { config: { presence: { key: userId } } })
         .on("presence", { event: "sync" }, () => { syncPresence(); setRoomPeople(current => current.map(person => ({ ...person, online: person.id ? onlineIds.has(person.id) : person.online }))); })
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "room_messages", filter: `room_id=eq.${room.id}` }, () => void loadRoomMessages())
@@ -355,21 +367,28 @@ export default function Home() {
     const adultCutoff = new Date(); adultCutoff.setFullYear(adultCutoff.getFullYear() - 18);
     if (new Date(`${birthDate}T12:00:00`) > adultCutoff) { setAuthBusy(false); return setAuthMessage("Meet Freely is only available to adults age 18 and older."); }
     const age = Math.floor((Date.now() - new Date(`${birthDate}T12:00:00`).getTime()) / 31557600000);
-    const [{ error: profileError }, { error: verificationError }] = await Promise.all([
-      supabase.from("profiles").upsert({ user_id: userId, username, age, broad_area: broadArea, interests, gender:gender || null, interested_in:interestedIn, preferred_min_age:preferredMinAge, preferred_max_age:preferredMaxAge, compatibility_mode:compatibilityMode, discoverable: false }),
-      supabase.from("verification_requests").upsert({ user_id: userId, adult_attested: true, birth_date: birthDate, status: "pending", submitted_at: new Date().toISOString() }),
-    ]);
-    const error = profileError ?? verificationError;
+    const { error } = await supabase.rpc("complete_onboarding", {
+      p_username: username,
+      p_age: age,
+      p_broad_area: broadArea,
+      p_interests: interests,
+      p_birth_date: birthDate,
+      p_gender: gender || null,
+      p_interested_in: interestedIn,
+      p_preferred_min_age: preferredMinAge,
+      p_preferred_max_age: preferredMaxAge,
+      p_compatibility_mode: compatibilityMode,
+    });
     setAuthBusy(false);
-    if (error) return setAuthMessage(error.message);
-    setMyAge(age); setProfileReady(true); setVerificationStatus("pending"); setAuthMessage("");
+    if (error) return setAuthMessage(friendlyError(error, "Your profile could not be submitted."));
+    setMyAge(age); setDiscoverable(true); setProfileReady(true); setVerificationStatus("pending"); setAuthMessage("Profile submitted. An adult review is next; you’ll be able to start membership immediately after approval.");
   };
   const startMembership = async () => {
     if (!supabase || !adultVerified) return;
     setAuthBusy(true); setAuthMessage("");
     const { data, error } = await supabase.functions.invoke("create-checkout-session");
     setAuthBusy(false);
-    if (error || !data?.url) return setAuthMessage(data?.error ?? error?.message ?? "Checkout could not be opened.");
+    if (error || !data?.url) return setAuthMessage(friendlyError(data?.error ?? error, "Checkout could not be opened. Please try again."));
     window.location.assign(data.url);
   };
   const manageBilling = async () => {
@@ -377,7 +396,7 @@ export default function Home() {
     setAuthBusy(true); setAuthMessage("");
     const { data, error } = await supabase.functions.invoke("create-billing-portal");
     setAuthBusy(false);
-    if (error || !data?.url) return setAuthMessage(data?.error ?? error?.message ?? "Billing could not be opened.");
+    if (error || !data?.url) return setAuthMessage(friendlyError(data?.error ?? error, "Billing could not be opened. Please try again."));
     window.location.assign(data.url);
   };
   const signOut = async () => { await supabase?.auth.signOut(); setSignedIn(false); setVerified(false); setAdultVerified(false); setProfileReady(false); setModal(null); };
@@ -418,7 +437,7 @@ export default function Home() {
   const hideDraggedPerson = async () => {
     if (!draggingPerson) return;
     const person = visiblePeople.find(item => item.name === draggingPerson);
-    if (supabase && userId && person?.id) await supabase.from("blocks").upsert({ blocker_id:userId, blocked_id:person.id });
+    if (supabase && userId && person?.id) { const {error} = await supabase.from("blocks").upsert({ blocker_id:userId, blocked_id:person.id }); if (error) { setDraggingPerson(null); return setAuthMessage(friendlyError(error, "That member could not be blocked.")); } }
     setHiddenPeople(current => [...current, draggingPerson]);
     setDraggingPerson(null);
   };
@@ -458,6 +477,18 @@ export default function Home() {
     setAuthBusy(false);
     if (error) return setAuthMessage(error.message);
     setMessageText(""); await openConversation(selectedConversation);
+  };
+  const undoLastHide = async () => {
+    const name = hiddenPeople.at(-1); if (!name) return;
+    const person = roomPeople.find(item => item.name === name);
+    if (supabase && userId && person?.id) { const {error} = await supabase.from("blocks").delete().eq("blocker_id",userId).eq("blocked_id",person.id); if (error) return setAuthMessage(friendlyError(error, "That block could not be undone.")); }
+    setHiddenPeople(current => current.slice(0,-1));
+  };
+  const blockSelectedMember = async () => {
+    if (!supabase || !userId || !selected?.id) return;
+    setAuthBusy(true); const {error} = await supabase.from("blocks").upsert({blocker_id:userId,blocked_id:selected.id}); setAuthBusy(false);
+    if (error) return setAuthMessage(friendlyError(error, "That member could not be blocked."));
+    setHiddenPeople(current => current.includes(selected.name) ? current : [...current,selected.name]); setModal(null); setAuthMessage("Member blocked and removed from your view.");
   };
   const sendRoomMessage = async () => {
     const body = roomMessageText.trim();
@@ -577,7 +608,7 @@ export default function Home() {
           <div className="mobile-bubble-field" style={{ transform: `translate(${roomOffset.x}px, ${roomOffset.y}px)` }}>
           <button className="mobile-own-bubble" onClick={openMyProfile}><span className="bubble-photo">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your primary profile" /> : username.slice(0, 2).toUpperCase() || "ME"}</span><strong>{username || "Your bubble"}</strong><small>You · tap to edit</small><span className="presence"><i />Here now</span></button>
           {visiblePeople.filter(person => !hiddenPeople.includes(person.name)).map((person, index) => <div role="button" tabIndex={0} key={person.id ?? person.name} className={`mobile-member-bubble mobile-bubble-${index + 1} ${person.tone} ${person.online ? "is-online" : "is-offline"} ${pinnedPeople.includes(person.name) ? "is-pinned" : ""}`} onClick={() => { if (!swipeMoved.current) hello(person); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") hello(person); }}><button className="bubble-pin" onClick={(event) => { event.stopPropagation(); setPinnedPeople(current => current.includes(person.name) ? current.filter(name => name !== person.name) : [...current, person.name]); }} aria-label={pinnedPeople.includes(person.name) ? `Unpin ${person.name}` : `Pin ${person.name}`}>{pinnedPeople.includes(person.name) ? "●" : "⌖"}</button><span className={`bubble-photo ${person.sample ? "sample-photo" : ""}`} style={person.photoUrl ? undefined : {backgroundPosition:person.photoPosition}}>{person.photoUrl ? <img src={person.photoUrl} alt={`${person.name} profile`} /> : person.sample ? "" : person.initials}</span><strong>{person.name}</strong><small>{person.age ? `${person.age} · ` : ""}{person.area}</small><span className="presence"><i />{person.online ? "Here now" : "Away"}</span></div>)}
-          </div>{verified && roomPeople.length === 0 && !roomLoading ? <div className="room-filter-empty honest-empty"><strong>You’re first in this room right now</strong><small>Try another interest room or invite a trusted beta member. We never fill member rooms with fake profiles.</small></div> : visiblePeople.length === 0 && <button className="room-filter-empty" onClick={() => setModal("filters")}><strong>No bubbles fit your filters</strong><small>Adjust your room filters</small></button>}{swipeHintVisible && roomPeople.length > 0 && <span className="swipe-hint">Swipe the room to explore farther</span>}
+          </div>{verified && roomPeople.length === 0 && !roomLoading ? <div className="room-filter-empty honest-empty"><strong>You’re first in this room right now</strong><small>Try another interest room or post an open invitation. Real member rooms are never filled with fake profiles.</small></div> : visiblePeople.length === 0 && <button className="room-filter-empty" onClick={() => setModal("filters")}><strong>No bubbles fit your filters</strong><small>Adjust your room filters</small></button>}{swipeHintVisible && roomPeople.length > 0 && <span className="swipe-hint">Swipe the room to explore farther</span>}
           <button className="mobile-invite-action" onClick={() => { setAuthMessage(""); setModal("invite"); }}>＋ <span>Post an invitation</span></button>
           <button className="mobile-filter-action" onClick={() => setModal("filters")}>☷ Filters{activeFilterCount ? ` · ${activeFilterCount}` : ""}</button>
         </div>
@@ -616,7 +647,7 @@ export default function Home() {
         <div className="section-heading"><div><p className="eyebrow">OPEN INVITATIONS</p><h2>See who wants to do something.</h2></div><p className="section-note">Short, timely posts from people who are online now. They disappear automatically, so the list always feels alive.</p></div>
         <div className="invite-layout">
           <div className="invite-feed">
-            {verified && invitations.length ? invitations.slice(0,4).map(invitation => <article className="invite-card" key={invitation.id} onClick={() => invitation.author.id === userId ? openMyProfile() : hello(invitation.author)}><div className={`invite-avatar ${invitation.author.tone}`}>{invitation.author.initials}<i /></div><div><div className="invite-meta"><strong>{invitation.author.name}{invitation.author.id === userId ? " · You" : ""}</strong><span>{new Date(invitation.created_at).toLocaleDateString([], { month:"short", day:"numeric" })}</span></div><p>{invitation.body}</p><small>{invitation.roomName} · {invitation.broad_area || invitation.author.area}</small></div><button>{invitation.author.id === userId ? "Profile" : "Message"} <span>→</span></button></article>) : <article className="invite-card" onClick={verified ? () => setModal("invite") : enter}><div className="invite-avatar rose">MF<i /></div><div><div className="invite-meta"><strong>{verified ? "The room is open" : "Verified member"}</strong><span>Now</span></div><p>{verified ? "No live invitations yet. Be the first to suggest something." : "Verify your account to read open invitations."}</p><small>Precise locations are never shown</small></div><button>{verified ? "Post" : "Join"} <span>→</span></button></article>}
+            {verified && invitations.length ? invitations.slice(0,4).map(invitation => <article className="invite-card" key={invitation.id}><div className={`invite-avatar ${invitation.author.tone}`}>{invitation.author.initials}<i /></div><div><div className="invite-meta"><strong>{invitation.author.name}{invitation.author.id === userId ? " · You" : ""}</strong><span>{new Date(invitation.created_at).toLocaleDateString([], { month:"short", day:"numeric" })}</span></div><p>{invitation.body}</p><small>{invitation.roomName} · {invitation.broad_area || invitation.author.area}</small></div><button onClick={() => invitation.author.id === userId ? openMyProfile() : hello(invitation.author)}>{invitation.author.id === userId ? "Profile" : "Message"} <span>→</span></button></article>) : <article className="invite-card"><div className="invite-avatar rose">MF<i /></div><div><div className="invite-meta"><strong>{verified ? "The room is open" : "Verified member"}</strong><span>Now</span></div><p>{verified ? "No live invitations yet. Be the first to suggest something." : "Verify your account to read open invitations."}</p><small>Precise locations are never shown</small></div><button onClick={verified ? () => setModal("invite") : enter}>{verified ? "Post" : "Join"} <span>→</span></button></article>}
             <button className="post-invite" onClick={verified ? () => { setAuthMessage(""); setModal("invite"); } : enter}><span>＋</span><div><strong>Post an open invitation</strong><small>Tell the room what you feel like doing.</small></div></button>
           </div>
           <aside className="interest-rooms"><p className="eyebrow">BROWSE ROOMS</p>{rooms.map(room => <button className={activeRoom === room.name ? "selected-room" : ""} aria-current={activeRoom === room.name ? "page" : undefined} key={room.name} onClick={() => { setActiveRoom(room.name); setRoomOffset({x:0,y:0}); document.getElementById("room")?.scrollIntoView({behavior:"smooth"}); }}><span className={`room-icon ${room.name === "Live music" ? "plum" : room.name === "Food & coffee" ? "gold" : room.name === "Outdoors" ? "mint" : "coral"}`}>{room.icon}</span><div><strong>{room.name}</strong><small>{verified ? `${roomCounts[room.name] ?? 0} here recently` : "Sign in to see live activity"}</small></div><b>{activeRoom === room.name ? "✓" : "→"}</b></button>)}</aside>
@@ -639,7 +670,7 @@ export default function Home() {
           {verified ? <button className="desktop-own-bubble" onClick={openMyProfile}><span className="bubble-photo">{primaryPhoto?.url ? <img src={primaryPhoto.url} alt="Your primary profile" /> : username.slice(0,2).toUpperCase() || "ME"}</span><strong>{username || "Your bubble"}</strong><small>You · tap to edit</small><span className="presence"><i />Here now</span></button> : <div className="room-center"><span>{activeRoom.toUpperCase()}</span><strong>{visibleRoomCount} nearby</strong><small>Verify to see and meet everyone in this room.</small></div>}
           {verified && roomPeople.length === 0 && !roomLoading && <div className="desktop-honest-empty"><strong>You’re first here right now.</strong><small>No sample members are shown inside real member rooms.</small></div>}
           <div className={`block-dock ${draggingPerson ? "is-ready" : ""}`} onDragOver={(event) => event.preventDefault()} onDrop={hideDraggedPerson}><span>×</span><strong>Hide & block</strong><small>Drag someone here for mutual invisibility</small></div>
-          {hiddenPeople.length > 0 && <button className="undo-hide" onClick={() => setHiddenPeople(current => current.slice(0, -1))}>Undo last hide</button>}
+          {hiddenPeople.length > 0 && <button className="undo-hide" onClick={undoLastHide}>Undo last hide</button>}
         </div>
         {verified && <section className="room-chat" aria-label={`${activeRoom} room conversation`}><div className="room-chat-head"><div><p className="eyebrow">ROOM CONVERSATION</p><h3>Talk with everyone here.</h3></div><small>Visible only to verified members</small></div><div className="room-chat-thread" aria-live="polite">{roomMessages.length ? roomMessages.map(message => <article className={message.sender_id === userId ? "mine" : ""} key={message.id}><div><strong>{message.senderName}</strong><time dateTime={message.created_at}>{new Date(message.created_at).toLocaleTimeString([], {hour:"numeric",minute:"2-digit"})}</time></div><p>{message.body}</p></article>) : <div className="room-chat-empty"><strong>The conversation is open.</strong><p>Say something about {activeRoom.toLowerCase()} to welcome the next person in.</p></div>}</div><div className="room-chat-compose"><textarea value={roomMessageText} onChange={event => setRoomMessageText(event.target.value.slice(0,500))} placeholder={`Say something to the ${activeRoom} room…`} aria-label="Room message"/><button className="primary" onClick={sendRoomMessage} disabled={!roomMessageText.trim() || authBusy}>Send <span>→</span></button></div><small className="character-note">{roomMessageText.length}/500 · Be welcoming. Reports go directly to the safety queue.</small>{authMessage && <p className="auth-message" role="status">{authMessage}</p>}</section>}
       </section>
@@ -731,7 +762,7 @@ export default function Home() {
         </> : <>
           <div className="member-profile-head"><div className={`modal-avatar ${selected?.sample ? "sample-photo" : ""} ${selected?.tone}`} style={selected?.photoUrl ? undefined : {backgroundPosition:selected?.photoPosition}}>{selected?.photoUrl ? <img src={selected.photoUrl} alt={`${selected.name} profile`} /> : selected?.sample ? "" : selected?.initials}</div><div><p className="eyebrow">MEMBER PROFILE{selected?.sample ? " · SAMPLE" : ""}</p><h2>{selected?.name}</h2><p>{selected?.age ? `${selected.age} · ` : ""}{selected?.gender ? `${selected.gender} · ` : ""}{selected?.area} · <span className={selected?.online ? "profile-online" : "profile-away"}>{selected?.online ? "Here now" : "Away"}</span></p></div></div>
           <p className="profile-bio">{selected?.note}</p><div className="profile-tags">{selected?.tags.map(tag => <span key={tag}>{tag}</span>)}</div>
-          {sent ? <div className="sent-note"><strong>Hello sent.</strong><p>Your introduction is waiting in their inbox. They can accept, politely pass, or report it—no awkward matching game.</p></div> : <><p className="profile-prompt">Feel a spark? Start with something from their profile.</p><textarea value={introductionText} onChange={(event) => setIntroductionText(event.target.value.slice(0,500))} aria-label="Introduction message"/><p className="character-note">{introductionText.length}/500 · Thoughtful introductions get thoughtful replies.</p><button className="primary full" onClick={sendIntroduction} disabled={!introductionText.trim() || authBusy}>{authBusy ? "Sending…" : "Send introduction"} <span>→</span></button>{authMessage && <p className="auth-message" role="status">{authMessage}</p>}</>}{selected && !selected.sample && <button className="signout-button" onClick={() => openReport(selected.id, selected.name)}>Report this profile</button>}
+          {sent ? <div className="sent-note"><strong>Hello sent.</strong><p>Your introduction is waiting in their inbox. They can accept, politely pass, or report it—no awkward matching game.</p></div> : <><p className="profile-prompt">Feel a spark? Start with something from their profile.</p><textarea value={introductionText} onChange={(event) => setIntroductionText(event.target.value.slice(0,500))} aria-label="Introduction message"/><p className="character-note">{introductionText.length}/500 · Thoughtful introductions get thoughtful replies.</p><button className="primary full" onClick={sendIntroduction} disabled={!introductionText.trim() || authBusy}>{authBusy ? "Sending…" : "Send introduction"} <span>→</span></button>{authMessage && <p className="auth-message" role="status">{authMessage}</p>}</>}{selected && !selected.sample && <><button className="signout-button" onClick={() => openReport(selected.id!, selected.name)}>Report this profile</button><button className="signout-button" onClick={blockSelectedMember} disabled={authBusy}>Hide & block this member</button></>}
         </>}
       </div></div>}
     </main>

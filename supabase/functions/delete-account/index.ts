@@ -20,9 +20,10 @@ Deno.serve(async (request) => {
   if (userError || !user) return new Response(JSON.stringify({ error: "Your session could not be verified." }), { status: 401, headers });
 
   const adminClient = createClient(url, serviceRole, { auth: { persistSession: false, autoRefreshToken: false } });
-  const { data: account } = await adminClient.from("accounts").select("membership_active,stripe_customer_id").eq("user_id", user.id).maybeSingle();
-  if (account?.membership_active || account?.stripe_customer_id) {
-    return new Response(JSON.stringify({ error: "Open Manage billing and cancel your membership before permanently deleting your account." }), { status: 409, headers });
+  const { data: account } = await adminClient.from("accounts").select("membership_active,membership_status").eq("user_id", user.id).maybeSingle();
+  const liveBillingStates = new Set(["active", "trialing", "past_due", "unpaid", "incomplete", "paused"]);
+  if (account?.membership_active || liveBillingStates.has(account?.membership_status ?? "inactive")) {
+    return new Response(JSON.stringify({ error: "Cancel membership first, then return after paid access has ended to permanently delete your account." }), { status: 409, headers });
   }
   const { error } = await adminClient.auth.admin.deleteUser(user.id);
   if (error) return new Response(JSON.stringify({ error: "Account deletion could not be completed." }), { status: 500, headers });

@@ -36,20 +36,21 @@ Deno.serve(async (request) => {
         membership_current_period_end: new Date(subscription.items.data[0].current_period_end * 1000).toISOString(),
       };
       const query = admin.from("accounts").update(update);
-      if (userId) await query.eq("user_id", userId); else await query.eq("stripe_customer_id", update.stripe_customer_id);
+      const { error } = userId ? await query.eq("user_id", userId) : await query.eq("stripe_customer_id", update.stripe_customer_id);
+      if (error) throw error;
     } else if (event.type === "checkout.session.completed") {
       const session = event.data.object as Stripe.Checkout.Session;
       const userId = session.metadata?.supabase_user_id ?? session.client_reference_id;
-      if (userId) await admin.from("accounts").update({
+      if (userId) { const { error } = await admin.from("accounts").update({
         stripe_customer_id: typeof session.customer === "string" ? session.customer : null,
         stripe_subscription_id: typeof session.subscription === "string" ? session.subscription : null,
         membership_status: session.payment_status === "paid" ? "active" : "incomplete",
         membership_active: session.payment_status === "paid",
-      }).eq("user_id", userId);
+      }).eq("user_id", userId); if (error) throw error; }
     } else if (event.type === "invoice.payment_failed") {
       const invoice = event.data.object as Stripe.Invoice;
       const customerId = typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id;
-      if (customerId) await admin.from("accounts").update({ membership_status: "past_due" }).eq("stripe_customer_id", customerId);
+      if (customerId) { const { error } = await admin.from("accounts").update({ membership_status: "past_due" }).eq("stripe_customer_id", customerId); if (error) throw error; }
     }
     return new Response("ok", { status: 200 });
   } catch {

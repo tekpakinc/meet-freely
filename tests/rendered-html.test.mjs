@@ -25,6 +25,8 @@ test("ships honest room and membership copy", async () => {
   assert.match(source, /Room conversation/i);
   assert.match(source, /2\.99/);
   assert.doesNotMatch(source, /86 people|86 here recently|SoftLaunch/i);
+  assert.doesNotMatch(source, /trusted beta member/i);
+  assert.match(source, /complete_onboarding/);
 });
 
 for (const [path,title] of [["/privacy","Privacy Policy"],["/terms","Terms of Service"],["/community-guidelines","Community Guidelines"],["/safety","Safety Center"]]) {
