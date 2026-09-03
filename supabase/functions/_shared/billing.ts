@@ -34,7 +34,7 @@ export async function stripeRequest(path: string, body: URLSearchParams) {
   if (!secret) throw new Error("Billing is not configured yet.");
   const response = await fetch(`https://api.stripe.com/v1/${path}`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/x-www-form-urlencoded" },
+    headers: { Authorization: `Bearer ${secret}`, "Content-Type": "application/x-www-form-urlencoded", "Stripe-Version": "2026-07-29.dahlia" },
     body,
   });
   const data = await response.json();
@@ -46,7 +46,7 @@ export async function stripeRead(path: string) {
   const secret = Deno.env.get("STRIPE_SECRET_KEY");
   if (!secret) throw new Error("Billing is not configured yet.");
   const response = await fetch(`https://api.stripe.com/v1/${path}`, {
-    headers: { Authorization: `Bearer ${secret}` },
+    headers: { Authorization: `Bearer ${secret}`, "Stripe-Version": "2026-07-29.dahlia" },
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data?.error?.message ?? "Stripe request failed.");

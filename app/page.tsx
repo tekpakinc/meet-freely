@@ -35,6 +35,17 @@ function friendlyError(error: unknown, fallback = "Something went wrong. Please 
   return message || fallback;
 }
 
+async function edgeFunctionError(error: unknown, data: unknown, fallback: string) {
+  if (typeof data === "object" && data && "error" in data) return friendlyError(String(data.error), fallback);
+  if (typeof error === "object" && error && "context" in error && error.context instanceof Response) {
+    try {
+      const payload = await error.context.clone().json() as { error?: string };
+      if (payload.error) return friendlyError(payload.error, fallback);
+    } catch { /* The response was not JSON; use the normal fallback below. */ }
+  }
+  return friendlyError(error, fallback);
+}
+
 const people: RoomPerson[] = [
   { name: "CityFern", age: 31, area: "West side", note: "Museum afternoons, tiny restaurants, and laughing too loudly.", tags: ["Long-term", "Art", "Food"], initials: "CF", photoPosition: "0% 0%", tone: "coral", online: true, sample: true },
   { name: "MilesAhead", age: 34, area: "North side", note: "Weekend cyclist. Weeknight cook. Looking for something steady.", tags: ["Long-term", "Outdoors", "Cooking"], initials: "MA", photoPosition: "50% 0%", tone: "sky", online: true, sample: true },
@@ -400,7 +411,7 @@ export default function Home() {
     setAuthBusy(true); setAuthMessage("");
     const { data, error } = await supabase.functions.invoke("create-checkout-session");
     setAuthBusy(false);
-    if (error || !data?.url) return setAuthMessage(friendlyError(data?.error ?? error, "Checkout could not be opened. Please try again."));
+    if (error || !data?.url) return setAuthMessage(await edgeFunctionError(error, data, "Checkout could not be opened. Please try again."));
     window.location.assign(data.url);
   };
   const manageBilling = async () => {
@@ -408,7 +419,7 @@ export default function Home() {
     setAuthBusy(true); setAuthMessage("");
     const { data, error } = await supabase.functions.invoke("create-billing-portal");
     setAuthBusy(false);
-    if (error || !data?.url) return setAuthMessage(friendlyError(data?.error ?? error, "Billing could not be opened. Please try again."));
+    if (error || !data?.url) return setAuthMessage(await edgeFunctionError(error, data, "Billing could not be opened. Please try again."));
     window.location.assign(data.url);
   };
   const signOut = async () => { await supabase?.auth.signOut(); setSignedIn(false); setVerified(false); setAdultVerified(false); setProfileReady(false); setModal(null); };

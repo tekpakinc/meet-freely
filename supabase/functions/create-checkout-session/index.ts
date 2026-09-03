@@ -43,7 +43,9 @@ Deno.serve(async (request) => {
     const session = await stripeRequest("checkout/sessions", body);
     return new Response(JSON.stringify({ url: session.url }), { headers });
   } catch (error) {
-    return new Response(JSON.stringify({ error: error instanceof Error ? error.message : "Checkout could not be started." }), { status: 500, headers });
+    const message = error instanceof Error ? error.message : "Checkout could not be started.";
+    console.error("create-checkout-session failed:", message);
+    return new Response(JSON.stringify({ error: message }), { status: 500, headers });
   }
 });
 
