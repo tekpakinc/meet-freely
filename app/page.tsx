@@ -27,6 +27,7 @@ async function prepareProfilePhoto(file: File) {
 function friendlyError(error: unknown, fallback = "Something went wrong. Please try again.") {
   const message = typeof error === "string" ? error : error instanceof Error ? error.message : typeof error === "object" && error && "message" in error ? String(error.message) : "";
   const normalized = message.toLowerCase();
+  if (normalized.includes("account no longer exists") || normalized.includes("accounts_user_id_fkey")) return "This sign-in belongs to an account that no longer exists. Please sign in again or create a new account.";
   if (normalized.includes("row-level security") || normalized.includes("permission denied")) return "Your session no longer has permission to do that. Please sign out, sign back in, and try once more.";
   if (normalized.includes("duplicate") || normalized.includes("unique constraint")) return "That has already been submitted.";
   if (normalized.includes("rate") || normalized.includes("too many") || normalized.includes("slow down")) return "You’re moving a little quickly. Please wait a moment and try again.";
@@ -361,9 +362,13 @@ export default function Home() {
   const saveProfile = async () => {
     if (!supabase || !adultConfirmed || !username || !birthDate || !broadArea || interests.length === 0) return;
     setAuthBusy(true);
-    const { data: sessionData } = await supabase.auth.getSession();
-    const userId = sessionData.session?.user.id;
-    if (!userId) { setAuthBusy(false); return setAuthMessage("Please sign in again."); }
+    const { data: userData, error: userError } = await supabase.auth.getUser();
+    const userId = userData.user?.id;
+    if (userError || !userId) {
+      await supabase.auth.signOut({ scope: "local" });
+      setAuthBusy(false); setSignedIn(false); setUserId(null); setProfileReady(false); setModal("verify"); setAuthMode("signin");
+      return setAuthMessage("That saved sign-in belonged to a deleted account and has been cleared. Please sign in again or create a new account.");
+    }
     const adultCutoff = new Date(); adultCutoff.setFullYear(adultCutoff.getFullYear() - 18);
     if (new Date(`${birthDate}T12:00:00`) > adultCutoff) { setAuthBusy(false); return setAuthMessage("Meet Freely is only available to adults age 18 and older."); }
     const age = Math.floor((Date.now() - new Date(`${birthDate}T12:00:00`).getTime()) / 31557600000);
